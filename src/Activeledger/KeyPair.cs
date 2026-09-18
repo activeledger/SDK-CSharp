@@ -173,10 +173,24 @@ namespace Activeledger
         /// Signs a message, returning the raw signature.
         /// </summary>
         /// <remarks>
-        /// Signing is HEDGED: fresh entropy goes into every call, so signing
-        /// the same message twice gives different bytes. That matches the
-        /// reference implementation, and it means a signature can never be
-        /// compared for equality -- only verified.
+        /// <para>
+        /// Whether the result is reproducible depends on the scheme, and the
+        /// two cases are opposite.
+        /// </para>
+        /// <para>
+        /// <b>The post-quantum schemes are HEDGED.</b> Fresh entropy goes into
+        /// every call, so signing the same message twice gives different
+        /// bytes. That matches the reference implementation, and it means such
+        /// a signature can never be compared for equality -- only verified.
+        /// </para>
+        /// <para>
+        /// <b>secp256k1 is DETERMINISTIC</b> (RFC 6979) and always low-S, so
+        /// the same key and message give the same bytes in every correct
+        /// implementation. That is deliberate: it is what allows an exact
+        /// comparison against published reference bytes, which is the only
+        /// kind of test that can catch a low-S regression. Compare those
+        /// freely.
+        /// </para>
         /// </remarks>
         public byte[] Sign(byte[] message)
         {
@@ -442,6 +456,17 @@ namespace Activeledger
         /// </remarks>
         private static byte[] Decode(KeyType type, string value, string what)
         {
+            // Checked explicitly so null reports what it is. Everything else
+            // on this path explains itself -- the empty-string case spells out
+            // why the 0x prefix is required -- and null is the likeliest bad
+            // value to arrive, since it comes from configuration or a database
+            // column rather than from a typo.
+            if (value is null)
+            {
+                throw new ArgumentNullException(
+                    nameof(value), $"{type.ToWire()} {what} key was null");
+            }
+
             if (type != KeyType.Secp256k1)
             {
                 try
