@@ -121,9 +121,25 @@ zero byte occurs about once in 400 keys, and an unpadded key is a different
 value to anything reading it strictly.
 
 **secp256k1 signatures are DER, and DER length varies** — 70, 71 and 72 bytes
-all occur. A raw 64-byte `r||s` pair is not what the ledger expects. Verifying
-deliberately does **not** enforce low-S, because the ledger verifies through
-OpenSSL, which both produces and accepts high-S signatures.
+all occur. A raw 64-byte `r||s` pair is not what the ledger expects.
+
+**secp256k1 signing is deterministic (RFC 6979) and always low-S**, and this
+matters in both directions:
+
+- *Emitting* low-S is not for the ledger, which accepts either. It is for
+  everything else: `@noble/curves` rejects high-S unless explicitly told not
+  to, and it is the reference implementation for the JavaScript side;
+  libsecp256k1 rejects it outright. A signer that emits high-S roughly half
+  the time fails against those verifiers roughly half the time, which reads
+  as flakiness rather than as a signature format problem.
+- *Verifying* deliberately does **not** enforce low-S, because the ledger
+  verifies through OpenSSL, which neither normalises nor requires it. Roughly
+  half of all ledger-produced signatures are high-S, and rejecting them would
+  be the same bug in the opposite direction.
+
+Because signing is deterministic, this SDK's signatures are byte-identical to
+`@noble/curves` for the same key and message — checked against published
+reference bytes on every test run, not merely verified.
 
 **Falcon signatures are not a fixed length.** They vary between roughly 649 and
 662 bytes. Any buffer, column or assertion that assumes a constant size will
@@ -141,14 +157,17 @@ signature, so signing the same message twice produces different bytes. This
 matches the reference implementation. Never compare signatures for equality —
 verify them.
 
-**Signing is never reproducible.** The post-quantum schemes are hedged, and
-ECDSA uses a random k, so signing the same message twice produces different
-bytes in all three. Never compare signatures for equality — verify them.
+**The post-quantum schemes are hedged**, so signing the same message twice
+produces different bytes. Never compare those for equality — verify them.
+secp256k1 is the exception: it is deterministic, so it can be compared, and
+this SDK does exactly that against the reference implementation.
 
 Conformance is checked against the cross-language vectors published by the
 ledger repository: all 24 verify — 6 per post-quantum scheme, and 12 for
 secp256k1 covering both public key forms — and signatures produced here verify
-against the reference public keys.
+against the reference public keys. The secp256k1 vectors additionally publish
+the exact deterministic bytes a conforming signer must emit, and this SDK
+reproduces all 12.
 
 ## Transactions
 
