@@ -354,6 +354,32 @@ namespace Activeledger.Tests
             Assert.Contains("0x04", error.Message);
         }
 
+        /// <summary>
+        /// A null key must report what it is.
+        /// </summary>
+        /// <remarks>
+        /// It used to fall through to a raw NullReferenceException while every
+        /// other error on this path explained itself. Null is also the
+        /// likeliest bad value to arrive, because it comes from configuration
+        /// or a database column rather than from a typo.
+        /// </remarks>
+        [Fact]
+        public void ANullKeyIsReportedAsNullRatherThanDereferenced()
+        {
+            var valid = KeyPair.Generate(KeyType.Secp256k1);
+
+            Assert.Throws<ArgumentNullException>(
+                () => KeyPair.FromPublic(KeyType.Secp256k1, null!));
+            Assert.Throws<ArgumentNullException>(
+                () => KeyPair.FromKeys(KeyType.Secp256k1, valid.PublicKey, null!));
+            Assert.Throws<ArgumentNullException>(
+                () => KeyPair.FromKeys(KeyType.Secp256k1, null!, valid.PrivateKey));
+
+            // The post-quantum path too, which shares the same decoder.
+            Assert.Throws<ArgumentNullException>(
+                () => KeyPair.FromPublic(KeyType.MlDsa65, null!));
+        }
+
         [Fact]
         public void NonHexIsRejected()
         {
