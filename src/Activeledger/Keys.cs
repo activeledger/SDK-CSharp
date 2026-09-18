@@ -59,6 +59,14 @@ namespace Activeledger
             "secp256k1" => KeyType.Secp256k1,
             "ml-dsa-65" => KeyType.MlDsa65,
             "falcon-512" => KeyType.Falcon512,
+
+            // The ledger routes these two to identical secp256k1
+            // verification, so an identity may already carry either. They are
+            // accepted here and NEVER emitted: ToWire always returns
+            // "secp256k1", so three names for one scheme cannot spread.
+            "bitcoin" => KeyType.Secp256k1,
+            "ethereum" => KeyType.Secp256k1,
+
             _ => throw new ArgumentException(
                 $"Unknown key type '{wire}' - expected rsa, secp256k1, ml-dsa-65 or falcon-512"),
         };
@@ -81,8 +89,16 @@ namespace Activeledger
         /// <summary>The algorithm this signer uses.</summary>
         KeyType KeyType { get; }
 
-        /// <summary>The public key, base64, in the encoding the ledger stores.</summary>
-        string PublicKeyBase64 { get; }
+        /// <summary>
+        /// The public key, as the string the ledger stores.
+        /// </summary>
+        /// <remarks>
+        /// The encoding depends on the scheme, which is why this is not named
+        /// for one: post-quantum keys are base64, and secp256k1 keys are
+        /// 0x-prefixed hex. Whatever this returns goes into the transaction
+        /// verbatim.
+        /// </remarks>
+        string PublicKey { get; }
 
         /// <summary>
         /// Signs the canonical bytes of a <c>$tx</c> object, returning the raw
