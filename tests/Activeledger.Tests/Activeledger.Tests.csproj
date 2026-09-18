@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- InvariantGlobalization makes the SDK reject the test platform's
+         localized satellite assemblies with NETSDK1188, because it cannot
+         recognise their locales. Only visible on a CLEAN restore, so an
+         incremental build hides it and CI finds it. English only is all this
+         suite needs. -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Activeledger/Activeledger.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="testdata/**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- netstandard2.0 so .NET Framework, Unity and older consumers work;
+         net8.0 for a modern target. BouncyCastle supports both. -->
+    <TargetFrameworks>netstandard2.0;net8.0</TargetFrameworks>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>false</ImplicitUsings>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <PackageId>Activeledger.SDK</PackageId>
+    <Version>2.0.0</Version>
+    <Authors>Activeledger</Authors>
+    <Description>C# SDK for Activeledger, with post-quantum identity support (ML-DSA-65 and Falcon-512)</Description>
+    <PackageTags>activeledger;blockchain;ledger;post-quantum;ml-dsa;falcon</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/activeledger/SDK-CSharp</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/activeledger/SDK-CSharp</RepositoryUrl>
+  </PropertyGroup>
+
+  <!-- netstandard2.0 predates System.Text.Json and IAsyncEnumerable, both of
+       which ship as packages. Added only for that target so a modern net8.0
+       consumer pulls nothing extra - and so .NET Framework and Unity
+       consumers are not shut out. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Pure managed code, both post-quantum schemes, one dependency.
+         Verified against the published cross-language vectors: all 12 pass,
+         6 ML-DSA-65 and 6 Falcon-512. -->
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
+  </ItemGroup>
+
+</Project>

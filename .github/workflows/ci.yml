@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+
+      - run: dotnet restore
+
+      # Warnings as errors here rather than in the csproj: a consumer building
+      # from source should not be stopped by a warning, but this library
+      # shipping one should stop a merge.
+      # Release throughout, because `dotnet pack` defaults to Release: a Debug
+      # build plus `pack --no-build` looks for an assembly that was never
+      # produced.
+      - name: Build
+        run: dotnet build --no-restore -c Release -warnaserror
+
+      - name: Test
+        run: dotnet test --no-build -c Release --verbosity normal
+
+      # The library targets netstandard2.0 as well as net8.0, and that target
+      # needs separate package references. A break there is invisible to the
+      # test run, which only exercises net8.0.
+      - name: Pack
+        run: dotnet pack src/Activeledger/Activeledger.csproj --no-build -c Release -o artifacts
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nupkg
+          path: artifacts/*.nupkg
