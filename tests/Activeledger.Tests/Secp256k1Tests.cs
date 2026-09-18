@@ -21,7 +21,8 @@ namespace Activeledger.Tests
     {
         private sealed record Vector(
             string Name, string Form, byte[] Message,
-            string PublicKey, string PrivateKey, byte[] Signature);
+            string PublicKey, string PrivateKey, byte[] Signature,
+            string DeterministicSignature);
 
         private static readonly List<Vector> Vectors = Load();
 
@@ -41,7 +42,8 @@ namespace Activeledger.Tests
                     new UTF8Encoding(false).GetBytes(v.GetProperty("message").GetString()!),
                     v.GetProperty("publicKey").GetString()!,
                     v.GetProperty("privateKey").GetString()!,
-                    Convert.FromBase64String(v.GetProperty("signature").GetString()!)));
+                    Convert.FromBase64String(v.GetProperty("signature").GetString()!),
+                    v.GetProperty("deterministicSignature").GetString()!));
             }
 
             return result;
@@ -106,12 +108,40 @@ namespace Activeledger.Tests
             }
         }
 
+        /// <summary>secp256k1's group order, and the low/high S boundary.</summary>
+        private static readonly System.Numerics.BigInteger N =
+            System.Numerics.BigInteger.Parse(
+                "00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141",
+                System.Globalization.NumberStyles.HexNumber);
+
+        private static System.Numerics.BigInteger HalfN => N / 2;
+
+        /// <summary>Pulls S out of a DER signature.</summary>
+        private static System.Numerics.BigInteger SignatureS(byte[] der)
+        {
+            var i = 2;
+            i += 2 + der[i + 1];                       // skip R
+            var length = der[i + 1];
+            var bytes = der.Skip(i + 2).Take(length).Reverse().Concat(new byte[] { 0 }).ToArray();
+            return new System.Numerics.BigInteger(bytes);
+        }
+
+        private static bool IsHighS(byte[] der) => SignatureS(der) > HalfN;
+
         /// <summary>
-        /// ECDSA here uses a random k, so signatures are not reproducible --
-        /// the same rule as the post-quantum schemes.
+        /// Signing is deterministic (RFC 6979), unlike the post-quantum
+        /// schemes.
         /// </summary>
+        /// <remarks>
+        /// ECDSA has no reason to be hedged the way ML-DSA is, and a
+        /// deterministic signer can be checked far more strictly: the same
+        /// key and message must give the same bytes in every correct
+        /// implementation, so exact signature bytes can be published as
+        /// cross-language vectors. A random k reduces every test to "is this
+        /// a valid signature", which cannot catch a low-S regression at all.
+        /// </remarks>
         [Fact]
-        public void SigningIsNotReproducible()
+        public void SigningIsDeterministic()
         {
             var v = Vectors[0];
             var key = KeyPair.FromKeys(KeyType.Secp256k1, v.PublicKey, v.PrivateKey);
@@ -119,9 +149,66 @@ namespace Activeledger.Tests
             var first = key.Sign(v.Message);
             var second = key.Sign(v.Message);
 
-            Assert.NotEqual(first, second);
+            Assert.Equal(first, second);
             Assert.True(key.Verify(v.Message, first));
-            Assert.True(key.Verify(v.Message, second));
+        }
+
+        [Fact]
+        public void DifferentMessagesStillProduceDifferentSignatures()
+        {
+            var v = Vectors[0];
+            var key = KeyPair.FromKeys(KeyType.Secp256k1, v.PublicKey, v.PrivateKey);
+
+            Assert.NotEqual(key.Sign(v.Message), key.Sign(Vectors[1].Message));
+        }
+
+        /// <summary>
+        /// Every signature this SDK emits is low-S.
+        /// </summary>
+        /// <remarks>
+        /// Not for the ledger's benefit -- it accepts either. For everything
+        /// else: @noble/curves rejects high-S unless told otherwise and is the
+        /// reference for the JavaScript side, and libsecp256k1 rejects it
+        /// outright. Emitting high-S roughly half the time fails against those
+        /// verifiers roughly half the time, which reads as flaky rather than
+        /// as a format problem.
+        /// </remarks>
+        [Fact]
+        public void EverySignatureEmittedIsLowS()
+        {
+            var key = KeyPair.Generate(KeyType.Secp256k1);
+
+            for (var i = 0; i < 200; i++)
+            {
+                var signature = key.Sign(new UTF8Encoding(false).GetBytes($"message {i}"));
+                Assert.False(IsHighS(signature), $"signature {i} was high-S");
+            }
+        }
+
+        /// <summary>
+        /// High-S signatures must still VERIFY.
+        /// </summary>
+        /// <remarks>
+        /// The other half of the rule, and the half that is easy to get wrong
+        /// by adopting a library default. The ledger verifies through OpenSSL,
+        /// which neither normalises nor requires low-S, so it produces high-S
+        /// signatures freely. Seven of the published vectors are high-S; a
+        /// verifier that enforced low-S would reject every one of them.
+        /// </remarks>
+        [Fact]
+        public void HighSSignaturesFromElsewhereStillVerify()
+        {
+            var highS = Vectors.Where(v => IsHighS(v.Signature)).ToList();
+
+            Assert.True(highS.Count > 0,
+                "the published vectors no longer contain a high-S signature, so this test proves nothing");
+
+            foreach (var v in highS)
+            {
+                var key = KeyPair.FromPublic(KeyType.Secp256k1, v.PublicKey);
+                Assert.True(key.Verify(v.Message, v.Signature),
+                    $"rejected a high-S signature ({v.Name}/{v.Form}) - low-S is being enforced on verify");
+            }
         }
 
         /// <summary>
@@ -308,6 +395,49 @@ namespace Activeledger.Tests
 
             Assert.Equal("secp256k1", KeyTypes.FromWire("bitcoin").ToWire());
             Assert.Equal("secp256k1", KeyTypes.FromWire("ethereum").ToWire());
+        }
+
+        /// <summary>
+        /// The strongest test in this file: the exact bytes, not just a valid
+        /// signature.
+        /// </summary>
+        /// <remarks>
+        /// These expected values come from @noble/curves via sdk-web, an
+        /// entirely separate implementation. Agreeing with them byte for byte
+        /// means agreeing on RFC 6979's k, on low-S normalisation and on DER
+        /// encoding all at once -- none of which a verify-round-trip test can
+        /// see. This is only possible because ECDSA signing is deterministic;
+        /// the post-quantum schemes are hedged and can never be checked this
+        /// way.
+        /// </remarks>
+        [Fact]
+        public void SignaturesAreByteIdenticalToTheReferenceImplementation()
+        {
+            foreach (var v in Vectors)
+            {
+                var key = KeyPair.FromKeys(KeyType.Secp256k1, v.PublicKey, v.PrivateKey);
+                var mine = Convert.ToBase64String(key.Sign(v.Message));
+
+                Assert.True(mine == v.DeterministicSignature,
+                    $"{v.Name}/{v.Form}: signature differs from the reference.\n" +
+                    $"  expected {v.DeterministicSignature}\n" +
+                    $"  got      {mine}\n" +
+                    "  If r matches and only s differs, low-S normalisation is the cause.");
+            }
+        }
+
+        /// <summary>
+        /// The published deterministic signatures must themselves be low-S,
+        /// or the test above would be enforcing the wrong thing.
+        /// </summary>
+        [Fact]
+        public void TheReferenceSignaturesAreLowS()
+        {
+            foreach (var v in Vectors)
+            {
+                Assert.False(IsHighS(Convert.FromBase64String(v.DeterministicSignature)),
+                    $"{v.Name}/{v.Form}: the published reference signature is high-S");
+            }
         }
 
         /// <summary>

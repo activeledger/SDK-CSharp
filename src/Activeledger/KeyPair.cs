@@ -5,7 +5,9 @@ using Org.BouncyCastle.Crypto.Generators;
 using Org.BouncyCastle.Crypto.Parameters;
 using Org.BouncyCastle.Crypto.Signers;
 using Org.BouncyCastle.Pqc.Crypto.Falcon;
+using Org.BouncyCastle.Asn1;
 using Org.BouncyCastle.Asn1.Sec;
+using Org.BouncyCastle.Crypto.Digests;
 using Org.BouncyCastle.Math;
 using Org.BouncyCastle.Security;
 using Org.BouncyCastle.Utilities;
@@ -212,15 +214,14 @@ namespace Activeledger
                 }
                 case KeyType.Secp256k1:
                 {
-                    // SHA-256 then ECDSA, and the result is DER - which is
-                    // what the ledger base64s into $sigs. DER length varies
-                    // (70-72 bytes in practice), so nothing may treat it as
-                    // fixed.
+                    // Deterministic (RFC 6979) and low-S. Both are choices,
+                    // and both are explained where they are made below.
                     var key = new ECPrivateKeyParameters(new BigInteger(1, _private), Secp256k1Domain);
-                    var signer = SignerUtilities.GetSigner("SHA-256withECDSA");
-                    signer.Init(true, new ParametersWithRandom(key, new SecureRandom()));
-                    signer.BlockUpdate(message, 0, message.Length);
-                    return signer.GenerateSignature();
+                    var signer = new ECDsaSigner(new HMacDsaKCalculator(new Sha256Digest()));
+                    signer.Init(true, key);
+
+                    var components = signer.GenerateSignature(Sha256(message));
+                    return EncodeDer(components[0], LowS(components[1]));
                 }
                 default:
                     throw new NotSupportedException($"{KeyType.ToWire()} signing is not implemented");
@@ -262,16 +263,22 @@ namespace Activeledger
                     {
                         var point = Secp256k1Domain.Curve.DecodePoint(_public);
                         var key = new ECPublicKeyParameters(point, Secp256k1Domain);
-                        var verifier = SignerUtilities.GetSigner("SHA-256withECDSA");
+                        var verifier = new ECDsaSigner();
                         verifier.Init(false, key);
-                        verifier.BlockUpdate(message, 0, message.Length);
 
-                        // Deliberately NOT normalising or requiring low-S.
-                        // The ledger verifies through OpenSSL, which does
-                        // neither, so it both produces and accepts high-S
-                        // signatures. Rejecting them here would reject
-                        // signatures the ledger itself made.
-                        return verifier.VerifySignature(signature);
+                        var (r, sig) = DecodeDer(signature);
+
+                        // Deliberately accepting HIGH-S as well as low.
+                        //
+                        // This SDK only ever emits low-S, but it must verify
+                        // what others produce, and the ledger verifies through
+                        // OpenSSL, which neither normalises nor requires it.
+                        // Rejecting high-S here would reject signatures the
+                        // ledger itself made - roughly half of them - which
+                        // presents as intermittent rather than as a format
+                        // problem. @noble/curves and libsecp256k1 both reject
+                        // by default; this is the opposite choice, on purpose.
+                        return verifier.VerifySignature(Sha256(message), r, sig);
                     }
                     default:
                         throw new NotSupportedException($"{KeyType.ToWire()} verification is not implemented");
@@ -311,6 +318,64 @@ namespace Activeledger
         /// </remarks>
         private static byte[] Secp256k1Scalar(BigInteger d) =>
             BigIntegers.AsUnsignedByteArray(32, d);
+
+        private static byte[] Sha256(byte[] message)
+        {
+            var digest = new Sha256Digest();
+            var hash = new byte[digest.GetDigestSize()];
+            digest.BlockUpdate(message, 0, message.Length);
+            digest.DoFinal(hash, 0);
+            return hash;
+        }
+
+        /// <summary>
+        /// Folds S into the lower half of the curve order.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// (r, s) and (r, n - s) are both valid signatures over the same
+        /// message - ECDSA malleability. The ledger accepts either, so this is
+        /// not required for the ledger's sake.
+        /// </para>
+        /// <para>
+        /// It is required for everything else. @noble/curves rejects high-S
+        /// unless explicitly told not to, and it is the reference for the
+        /// JavaScript side; libsecp256k1 rejects it outright. A signer that
+        /// emits high-S roughly half the time therefore fails against those
+        /// verifiers roughly half the time, which reads as flakiness rather
+        /// than as a signature format problem. Emitting only low-S costs one
+        /// subtraction and makes this SDK agree with all of them.
+        /// </para>
+        /// </remarks>
+        private static BigInteger LowS(BigInteger s)
+        {
+            var halfOrder = Secp256k1Domain.N.ShiftRight(1);
+            return s.CompareTo(halfOrder) > 0 ? Secp256k1Domain.N.Subtract(s) : s;
+        }
+
+        /// <summary>
+        /// DER-encodes the signature components.
+        /// </summary>
+        /// <remarks>
+        /// DER is what the ledger base64s into <c>$sigs</c>. Its length varies
+        /// with the size of r and s, so nothing may treat it as fixed, and a
+        /// raw 64-byte r||s pair is not a substitute.
+        /// </remarks>
+        private static byte[] EncodeDer(BigInteger r, BigInteger s) =>
+            new DerSequence(new DerInteger(r), new DerInteger(s)).GetEncoded("DER");
+
+        private static (BigInteger R, BigInteger S) DecodeDer(byte[] signature)
+        {
+            var sequence = (Asn1Sequence)Asn1Object.FromByteArray(signature);
+            if (sequence.Count != 2)
+            {
+                throw new ArgumentException($"DER signature has {sequence.Count} components, expected 2");
+            }
+
+            return (
+                ((DerInteger)sequence[0]).PositiveValue,
+                ((DerInteger)sequence[1]).PositiveValue);
+        }
 
         /// <summary>Encodes key bytes the way the ledger stores them.</summary>
         private static string Encode(KeyType type, byte[] bytes) =>
