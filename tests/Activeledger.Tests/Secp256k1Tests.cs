@@ -22,7 +22,7 @@ namespace Activeledger.Tests
         private sealed record Vector(
             string Name, string Form, byte[] Message,
             string PublicKey, string PrivateKey, byte[] Signature,
-            string DeterministicSignature);
+            string DeterministicSignature, byte[] HighSSignature);
 
         private static readonly List<Vector> Vectors = Load();
 
@@ -43,7 +43,8 @@ namespace Activeledger.Tests
                     v.GetProperty("publicKey").GetString()!,
                     v.GetProperty("privateKey").GetString()!,
                     Convert.FromBase64String(v.GetProperty("signature").GetString()!),
-                    v.GetProperty("deterministicSignature").GetString()!));
+                    v.GetProperty("deterministicSignature").GetString()!,
+                    Convert.FromBase64String(v.GetProperty("highSSignature").GetString()!)));
             }
 
             return result;
@@ -189,25 +190,54 @@ namespace Activeledger.Tests
         /// High-S signatures must still VERIFY.
         /// </summary>
         /// <remarks>
+        /// <para>
         /// The other half of the rule, and the half that is easy to get wrong
         /// by adopting a library default. The ledger verifies through OpenSSL,
         /// which neither normalises nor requires low-S, so it produces high-S
-        /// signatures freely. Seven of the published vectors are high-S; a
-        /// verifier that enforced low-S would reject every one of them.
+        /// signatures freely. A verifier that enforced low-S -- as
+        /// @noble/curves, libsecp256k1 and Rust's k256 all do -- would reject
+        /// roughly half of everything the ledger makes.
+        /// </para>
+        /// <para>
+        /// Uses the PUBLISHED high-S form, which every vector carries. The
+        /// alternative, filtering the vectors for whichever happened to land
+        /// high, made the coverage depend on the random k that generated the
+        /// file. This does not.
+        /// </para>
         /// </remarks>
         [Fact]
         public void HighSSignaturesFromElsewhereStillVerify()
         {
-            var highS = Vectors.Where(v => IsHighS(v.Signature)).ToList();
+            foreach (var v in Vectors)
+            {
+                // The fixture must be what it claims. A "high-S" signature
+                // that is not high-S would pass a permissive verifier for the
+                // wrong reason, proving nothing while looking green.
+                Assert.True(IsHighS(v.HighSSignature),
+                    $"{v.Name}/{v.Form}: the published high-S fixture is not high-S");
 
-            Assert.True(highS.Count > 0,
-                "the published vectors no longer contain a high-S signature, so this test proves nothing");
+                var key = KeyPair.FromPublic(KeyType.Secp256k1, v.PublicKey);
+                Assert.True(key.Verify(v.Message, v.HighSSignature),
+                    $"rejected a high-S signature ({v.Name}/{v.Form}) - low-S is being enforced on verify");
+            }
+        }
 
-            foreach (var v in highS)
+        /// <summary>
+        /// The high-S form must not be accepted for a different message.
+        /// </summary>
+        /// <remarks>
+        /// Permissive about s only. Accepting high-S must not have quietly
+        /// widened anything else.
+        /// </remarks>
+        [Fact]
+        public void TheHighSFormStillRejectsATamperedMessage()
+        {
+            foreach (var v in Vectors)
             {
                 var key = KeyPair.FromPublic(KeyType.Secp256k1, v.PublicKey);
-                Assert.True(key.Verify(v.Message, v.Signature),
-                    $"rejected a high-S signature ({v.Name}/{v.Form}) - low-S is being enforced on verify");
+                var tampered = v.Message.Concat(new byte[] { (byte)' ' }).ToArray();
+
+                Assert.False(key.Verify(tampered, v.HighSSignature));
             }
         }
 
