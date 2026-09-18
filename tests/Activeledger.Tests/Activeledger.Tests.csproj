@@ -6,6 +6,12 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- InvariantGlobalization makes the SDK reject the test platform's
+         localized satellite assemblies with NETSDK1188, because it cannot
+         recognise their locales. Only visible on a CLEAN restore, so an
+         incremental build hides it and CI finds it. English only is all this
+         suite needs. -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
 
   <ItemGroup>
