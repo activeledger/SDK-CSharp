@@ -77,7 +77,7 @@ namespace Activeledger
                 .Set("$contract", "onboard")
                 .Set("$i", new JsonObject().Set(label, new JsonObject()
                     .Set("type", signer.KeyType.ToWire())
-                    .Set("publicKey", signer.PublicKeyBase64)))
+                    .Set("publicKey", signer.PublicKey)))
                 .Set("$o", new JsonObject());
 
             var signature = Convert.ToBase64String(signer.Sign(CanonicalJson.Bytes(body)));

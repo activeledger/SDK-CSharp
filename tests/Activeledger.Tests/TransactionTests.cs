@@ -33,7 +33,7 @@ namespace Activeledger.Tests
 
             var identity = root.GetProperty("$tx").GetProperty("$i").GetProperty("identity");
             Assert.Equal("ml-dsa-65", identity.GetProperty("type").GetString());
-            Assert.Equal(key.PublicKeyBase64, identity.GetProperty("publicKey").GetString());
+            Assert.Equal(key.PublicKey, identity.GetProperty("publicKey").GetString());
 
             // Keyed by the $i LABEL, not a stream id: there is no stream yet.
             Assert.True(root.GetProperty("$sigs").TryGetProperty("identity", out _));

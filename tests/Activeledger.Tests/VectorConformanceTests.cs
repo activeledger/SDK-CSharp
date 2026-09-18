@@ -37,6 +37,14 @@ namespace Activeledger.Tests
             var result = new List<Vector>();
             foreach (var v in doc.RootElement.GetProperty("vectors").EnumerateArray())
             {
+                // Post-quantum only. The same file now carries secp256k1,
+                // whose key encoding and signature format are different in
+                // every respect; Secp256k1Tests covers those. Loading them
+                // here would fail this class's length assertions, which is
+                // exactly what it did the first time the file was refreshed.
+                var type = v.GetProperty("type").GetString()!;
+                if (type is not ("ml-dsa-65" or "falcon-512")) continue;
+
                 result.Add(new Vector(
                     KeyTypes.FromWire(v.GetProperty("type").GetString()!),
                     v.GetProperty("messageName").GetString()!,
@@ -75,8 +83,8 @@ namespace Activeledger.Tests
             foreach (var v in Vectors)
             {
                 var key = KeyPair.FromKeys(v.Type, v.PublicKey, v.PrivateKey);
-                Assert.Equal(v.PublicKey, key.PublicKeyBase64);
-                Assert.Equal(v.PrivateKey, key.PrivateKeyBase64);
+                Assert.Equal(v.PublicKey, key.PublicKey);
+                Assert.Equal(v.PrivateKey, key.PrivateKey);
             }
         }
 
@@ -159,12 +167,12 @@ namespace Activeledger.Tests
         public void GeneratedKeysHaveTheDocumentedLengths()
         {
             var mldsa = KeyPair.Generate(KeyType.MlDsa65);
-            Assert.Equal(1952, Convert.FromBase64String(mldsa.PublicKeyBase64).Length);
-            Assert.Equal(4032, Convert.FromBase64String(mldsa.PrivateKeyBase64).Length);
+            Assert.Equal(1952, Convert.FromBase64String(mldsa.PublicKey).Length);
+            Assert.Equal(4032, Convert.FromBase64String(mldsa.PrivateKey).Length);
 
             var falcon = KeyPair.Generate(KeyType.Falcon512);
-            Assert.Equal(897, Convert.FromBase64String(falcon.PublicKeyBase64).Length);
-            Assert.Equal(1281, Convert.FromBase64String(falcon.PrivateKeyBase64).Length);
+            Assert.Equal(897, Convert.FromBase64String(falcon.PublicKey).Length);
+            Assert.Equal(1281, Convert.FromBase64String(falcon.PrivateKey).Length);
         }
 
         // BouncyCastle strips the 1-byte Falcon header, so generated keys come
@@ -174,8 +182,8 @@ namespace Activeledger.Tests
         public void GeneratedFalconKeysCarryTheirHeaderBytes()
         {
             var key = KeyPair.Generate(KeyType.Falcon512);
-            Assert.Equal(0x09, Convert.FromBase64String(key.PublicKeyBase64)[0]);
-            Assert.Equal(0x59, Convert.FromBase64String(key.PrivateKeyBase64)[0]);
+            Assert.Equal(0x09, Convert.FromBase64String(key.PublicKey)[0]);
+            Assert.Equal(0x59, Convert.FromBase64String(key.PrivateKey)[0]);
         }
 
         [Fact]
@@ -196,7 +204,7 @@ namespace Activeledger.Tests
             var key = KeyPair.FromPublic(v.Type, v.PublicKey);
             Assert.False(key.CanSign);
             Assert.Throws<InvalidOperationException>(() => key.Sign(v.Message));
-            Assert.Throws<InvalidOperationException>(() => key.PrivateKeyBase64);
+            Assert.Throws<InvalidOperationException>(() => key.PrivateKey);
         }
 
         [Fact]

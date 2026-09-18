@@ -134,6 +134,86 @@ namespace Activeledger.Tests
         public Task FalconIdentityOnboardsAndIsRecordedCorrectly() =>
             OnboardAndCheck(KeyType.Falcon512, 897);
 
+        [LiveFact]
+        public Task Secp256k1CompressedIdentityOnboardsAndIsRecordedCorrectly() =>
+            OnboardAndCheckSecp(compressed: true, expectedChars: 68);
+
+        /// <summary>
+        /// The ledger accepts both public key forms, and tells them apart by a
+        /// length heuristic. Onboarding only ever with the compressed form
+        /// would leave the other path unproven.
+        /// </summary>
+        [LiveFact]
+        public Task Secp256k1UncompressedIdentityOnboardsAndIsRecordedCorrectly() =>
+            OnboardAndCheckSecp(compressed: false, expectedChars: 132);
+
+        private static async Task OnboardAndCheckSecp(bool compressed, int expectedChars)
+        {
+            var key = KeyPair.Generate(KeyType.Secp256k1, compressed);
+            var identity = await Client().OnboardAsync(key);
+            Assert.NotEmpty(identity.StreamId);
+
+            var authority = (await AwaitAuthorities(0, identity.StreamId))[0];
+            var stored = authority.GetProperty("public").GetString()!;
+
+            Assert.Equal("secp256k1", authority.GetProperty("type").GetString());
+
+            // Stored as 0x-prefixed hex, NOT base64. If this ever comes back
+            // base64 the SDK has encoded it the post-quantum way and every
+            // later signature fails as 1220.
+            Assert.StartsWith("0x", stored);
+            Assert.Equal(expectedChars, stored.Length);
+            Assert.Equal(key.PublicKey, stored);
+        }
+
+        [LiveFact]
+        public async Task ASecp256k1SignedTransactionIsAccepted()
+        {
+            var client = Client();
+            var key = KeyPair.Generate(KeyType.Secp256k1);
+            var identity = await client.OnboardAsync(key);
+
+            var tx = Transaction.Builder()
+                .Namespace("default").Contract("namespace")
+                .Input(identity.StreamId, identity.Signer,
+                    new JsonObject().Set("namespace", Unique("csec")))
+                .Build();
+
+            var response = await client.SubmitAsync(tx);
+            Assert.True(response.Committed, $"rejected: {response.Raw}");
+        }
+
+        /// <summary>
+        /// The reason for supporting it, measured against a real ledger rather
+        /// than asserted: the same transaction costs far less to store.
+        /// </summary>
+        [LiveFact]
+        public async Task ASecp256k1TransactionIsFarSmallerThanAPostQuantumOne()
+        {
+            var client = Client();
+
+            var ec = KeyPair.Generate(KeyType.Secp256k1);
+            var pq = KeyPair.Generate(KeyType.MlDsa65);
+
+            var ecIdentity = await client.OnboardAsync(ec);
+            var pqIdentity = await client.OnboardAsync(pq);
+
+            var ecTx = Transaction.Builder()
+                .Namespace("default").Contract("namespace")
+                .Input(ecIdentity.StreamId, ecIdentity.Signer,
+                    new JsonObject().Set("namespace", Unique("csecsize")))
+                .Build().ToJson().Length;
+
+            var pqTx = Transaction.Builder()
+                .Namespace("default").Contract("namespace")
+                .Input(pqIdentity.StreamId, pqIdentity.Signer,
+                    new JsonObject().Set("namespace", Unique("cspqsize")))
+                .Build().ToJson().Length;
+
+            Assert.True(ecTx * 10 < pqTx,
+                $"expected a large saving, got {ecTx} vs {pqTx} characters");
+        }
+
         private static async Task OnboardAndCheck(KeyType type, int expectedPublicBytes)
         {
             var key = KeyPair.Generate(type);
@@ -148,7 +228,7 @@ namespace Activeledger.Tests
 
             var stored = Convert.FromBase64String(authority.GetProperty("public").GetString()!);
             Assert.Equal(expectedPublicBytes, stored.Length);
-            Assert.Equal(key.PublicKeyBase64, authority.GetProperty("public").GetString());
+            Assert.Equal(key.PublicKey, authority.GetProperty("public").GetString());
         }
 
         [LiveFact]

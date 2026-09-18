@@ -5,7 +5,8 @@
 Build, sign and submit Activeledger transactions from .NET, with support for
 post-quantum identities.
 
-- **ML-DSA-65** and **Falcon-512** alongside the classical key types
+- **ML-DSA-65** and **Falcon-512** post-quantum identities
+- **secp256k1** for small payloads, hardware keys and existing identities
 - Canonical JSON that reproduces the exact bytes the ledger signs
 - Server-sent event subscriptions
 - One dependency (BouncyCastle), pure managed code, no native libraries
@@ -49,24 +50,48 @@ if (!response.Committed)
 }
 ```
 
-## Post-quantum support
+## Key types
 
-Both schemes the ledger accepts are supported, and either can hold an identity.
+| Key type | Wire string | Public | Private | Signature | Encoding |
+|---|---|---|---|---|---|
+| `KeyType.MlDsa65` | `ml-dsa-65` | 1952 | 4032 | 3309 | base64 |
+| `KeyType.Falcon512` | `falcon-512` | 897 | 1281 | **649–662, variable** | base64 |
+| `KeyType.Secp256k1` | `secp256k1` | 33 or 65 | 32 | **~70–72, variable** | `0x` hex |
+| `KeyType.Rsa` | `rsa` | — | — | — | not implemented |
 
-| Key type | Wire string | Public | Private | Signature |
-|---|---|---|---|---|
-| `KeyType.MlDsa65` | `ml-dsa-65` | 1952 | 4032 | 3309 |
-| `KeyType.Falcon512` | `falcon-512` | 897 | 1281 | **649–662, variable** |
-| `KeyType.Rsa` | `rsa` | — | — | — |
-| `KeyType.Secp256k1` | `secp256k1` | — | — | — |
+**RSA is deliberately not implemented.** It is the ledger's fallback when a
+transaction omits `type`, which is precisely why this SDK always sends the type
+explicitly.
+
+### Which to choose
+
+Post-quantum if the identity must outlive a cryptographically relevant quantum
+computer. secp256k1 otherwise — it is dramatically cheaper, and every byte is
+stored on the ledger permanently and replicated to every node. Measured with
+this SDK:
+
+| Transaction | secp256k1 | Falcon-512 | ML-DSA-65 |
+|---|---|---|---|
+| Onboard | **321 B** | 2,230 B | 7,173 B |
+| Transfer | **204 B** | 984 B | 4,520 B |
+
+secp256k1 is also what hardware wallets and most HSMs speak, and it is what
+existing Activeledger identities already use — so it is the only way to sign
+for an identity created before post-quantum support.
+
+Note that phone secure enclaves (Apple Secure Enclave, Android StrongBox) use
+**P-256**, not secp256k1, and the ledger does not support P-256 at all.
 
 ```csharp
 var mldsa  = KeyPair.Generate(KeyType.MlDsa65);
 var falcon = KeyPair.Generate(KeyType.Falcon512);
+var ec     = KeyPair.Generate(KeyType.Secp256k1);                    // compressed
+var ecFull = KeyPair.Generate(KeyType.Secp256k1, compressed: false); // uncompressed
 
-// Base64, in exactly the encoding the ledger stores
-string pub  = mldsa.PublicKeyBase64;
-string priv = mldsa.PrivateKeyBase64;
+// Exactly the encoding the ledger stores, whichever scheme it is
+string pub  = mldsa.PublicKey;    // base64
+string priv = mldsa.PrivateKey;
+string ecPub = ec.PublicKey;      // "0x02a1b2..."
 
 // Round-trip a stored key
 var restored = KeyPair.FromKeys(KeyType.MlDsa65, pub, priv);
@@ -75,8 +100,30 @@ var restored = KeyPair.FromKeys(KeyType.MlDsa65, pub, priv);
 var verifier = KeyPair.FromPublic(KeyType.MlDsa65, pub);
 ```
 
-Three things about these keys are worth knowing before they cost you an
-afternoon.
+`PublicKey` and `PrivateKey` are deliberately not named for an encoding,
+because it differs by scheme: base64 for the post-quantum keys, `0x`-prefixed
+hex for secp256k1. Whatever they return goes into the transaction verbatim.
+
+Things about these keys worth knowing before they cost you an afternoon.
+
+**secp256k1 keys are hex with an `0x` prefix, not base64.** The prefix is part
+of what the ledger stores, so this SDK requires it rather than tolerating its
+absence — a hex string without it can decode as base64 into plausible-looking
+bytes of the wrong length, which is the kind of mistake that surfaces as 1220.
+
+**secp256k1 public keys come in two lengths**, and the ledger accepts both: 33
+bytes compressed (`0x02`/`0x03`) and 65 uncompressed (`0x04`). This SDK
+generates compressed by default because the key is stored forever. A length and
+a point prefix that disagree is rejected by name.
+
+**secp256k1 private keys are left-padded to 32 bytes.** A scalar with a leading
+zero byte occurs about once in 400 keys, and an unpadded key is a different
+value to anything reading it strictly.
+
+**secp256k1 signatures are DER, and DER length varies** — 70, 71 and 72 bytes
+all occur. A raw 64-byte `r||s` pair is not what the ledger expects. Verifying
+deliberately does **not** enforce low-S, because the ledger verifies through
+OpenSSL, which both produces and accepts high-S signatures.
 
 **Falcon signatures are not a fixed length.** They vary between roughly 649 and
 662 bytes. Any buffer, column or assertion that assumes a constant size will
@@ -94,9 +141,14 @@ signature, so signing the same message twice produces different bytes. This
 matches the reference implementation. Never compare signatures for equality —
 verify them.
 
+**Signing is never reproducible.** The post-quantum schemes are hedged, and
+ECDSA uses a random k, so signing the same message twice produces different
+bytes in all three. Never compare signatures for equality — verify them.
+
 Conformance is checked against the cross-language vectors published by the
-ledger repository: all 12 (6 per scheme) verify, and signatures produced here
-verify against the reference public keys.
+ledger repository: all 24 verify — 6 per post-quantum scheme, and 12 for
+secp256k1 covering both public key forms — and signatures produced here verify
+against the reference public keys.
 
 ## Transactions
 
@@ -210,7 +262,7 @@ service or a user's wallet:
 public sealed class HsmSigner : ISigner
 {
     public KeyType KeyType => KeyType.MlDsa65;
-    public string PublicKeyBase64 => /* ... */;
+    public string PublicKey => /* ... */;
     public byte[] Sign(byte[] message) => /* ... */;
 }
 ```
@@ -307,6 +359,13 @@ than `Newtonsoft.Json`, which cannot reproduce the required byte sequence.
 | `GenerateSignature` | handled by `Build()` / `Transaction.Onboard()` |
 | `MakeRequest` | `ActiveledgerClient` |
 | `SDKPreferences` | constructor arguments |
+
+### 2.0 to 2.1
+
+`ISigner.PublicKeyBase64` is now `ISigner.PublicKey`, and `KeyPair`'s
+`PublicKeyBase64` / `PrivateKeyBase64` are `PublicKey` / `PrivateKey`. The old
+names described only the post-quantum encoding and would have been actively
+wrong for secp256k1, which is hex.
 
 ## Licence
 
