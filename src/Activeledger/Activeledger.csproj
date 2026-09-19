@@ -19,6 +19,13 @@
     <RepositoryUrl>https://github.com/activeledger/SDK-CSharp</RepositoryUrl>
   </PropertyGroup>
 
+  <!-- The BIP-39 wordlist. Embedded rather than shipped beside the assembly
+       so RecoveryPhrase works from a single DLL, including on Unity and
+       .NET Framework consumers with no content-file handling. -->
+  <ItemGroup>
+    <EmbeddedResource Include="bip39-english.txt" />
+  </ItemGroup>
+
   <!-- netstandard2.0 predates System.Text.Json and IAsyncEnumerable, both of
        which ship as packages. Added only for that target so a modern net8.0
        consumer pulls nothing extra - and so .NET Framework and Unity
