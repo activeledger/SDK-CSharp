@@ -1,5 +1,6 @@
 using System;
 using System.Security.Cryptography;
+using System.Text;
 using Org.BouncyCastle.Crypto;
 using Org.BouncyCastle.Crypto.Generators;
 using Org.BouncyCastle.Crypto.Parameters;
@@ -133,6 +134,170 @@ namespace Activeledger
                 }
                 default:
                     throw new NotSupportedException($"{type.ToWire()} key generation is not implemented");
+            }
+        }
+
+        /// <summary>
+        /// Derives a key pair from the algorithm's own seed.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// No key derivation function is applied: the bytes given are the
+        /// seed the scheme itself takes - 32 for ml-dsa-65 and secp256k1, 48
+        /// for falcon-512. A wrong length is refused rather than padded,
+        /// because a padded seed is a different identity, not a malformed
+        /// one.
+        /// </para>
+        /// <para>
+        /// This is how a private key moves between Activeledger SDKs. The PHP
+        /// SDK's ml-dsa-65 private key IS a 32-byte seed - its library
+        /// implements FIPS 204 key generation from a seed but not
+        /// skEncode/skDecode - so the 4032-byte encoding this SDK exports
+        /// cannot be loaded there. The seed can be, and gives an identical
+        /// public key.
+        /// </para>
+        /// <para>
+        /// For secp256k1 the seed IS the private scalar, so it has to be a
+        /// valid one. A scalar of zero, or one at or above the group order,
+        /// is refused rather than reduced mod n: reducing produces a
+        /// perfectly functional key belonging to a different identity, and
+        /// nothing downstream ever reports a problem.
+        /// </para>
+        /// </remarks>
+        /// <param name="type">The scheme to derive.</param>
+        /// <param name="seed">The algorithm's seed, at its exact length.</param>
+        /// <param name="compressed">Return a compressed public key (secp256k1 only).</param>
+        public static KeyPair FromSeed(KeyType type, byte[] seed, bool compressed = true)
+        {
+            if (seed == null)
+            {
+                throw new ArgumentNullException(nameof(seed));
+            }
+
+            var expected = RecoveryPhrase.SeedSize(type);
+            if (seed.Length != expected)
+            {
+                throw new ArgumentException(
+                    $"{type.ToWire()} needs a {expected}-byte seed, got {seed.Length}. It is " +
+                    "refused rather than padded: a padded seed is a different identity, not a " +
+                    "malformed one.",
+                    nameof(seed));
+            }
+
+            switch (type)
+            {
+                case KeyType.MlDsa65:
+                {
+                    // BouncyCastle's seed constructor, rather than driving the
+                    // generator with a fixed SecureRandom. Both give the same
+                    // key - measured - but this one says what it means.
+                    var priv = MLDsaPrivateKeyParameters.FromSeed(MLDsaParameters.ml_dsa_65, seed);
+                    return new KeyPair(
+                        type,
+                        priv.GetPublicKey().GetEncoded(),
+                        priv.GetEncoded());
+                }
+                case KeyType.Falcon512:
+                {
+                    // Falcon has no seed constructor, so the generator is fed
+                    // a SecureRandom that yields exactly these bytes. Verified
+                    // byte for byte against @noble/post-quantum across the
+                    // full key.
+                    var generator = new FalconKeyPairGenerator();
+                    generator.Init(new FalconKeyGenerationParameters(
+                        new FixedSecureRandom(seed), FalconParameters.falcon_512));
+                    var pair = generator.GenerateKeyPair();
+
+                    return new KeyPair(
+                        type,
+                        WithHeader(((FalconPublicKeyParameters)pair.Public).GetEncoded(), FalconPublicHeader),
+                        WithHeader(((FalconPrivateKeyParameters)pair.Private).GetEncoded(), FalconPrivateHeader));
+                }
+                case KeyType.Secp256k1:
+                {
+                    var d = new BigInteger(1, seed);
+                    if (d.SignValue == 0 || d.CompareTo(Secp256k1Domain.N) >= 0)
+                    {
+                        throw new ArgumentException(
+                            "seed is not a valid secp256k1 private key - the scalar must be in " +
+                            "[1, n-1]",
+                            nameof(seed));
+                    }
+
+                    return new KeyPair(
+                        type,
+                        Secp256k1Domain.G.Multiply(d).Normalize().GetEncoded(compressed),
+                        Secp256k1Scalar(d));
+                }
+                default:
+                    throw new NotSupportedException(
+                        $"{type.ToWire()} cannot be derived from a seed");
+            }
+        }
+
+        /// <summary>
+        /// Derives a key pair from a BIP-39 recovery phrase.
+        /// </summary>
+        /// <remarks>
+        /// One phrase can back an ml-dsa-65, a falcon-512 and a secp256k1
+        /// identity at once: each type derives its own seed, so none of them
+        /// reveals the others.
+        /// </remarks>
+        /// <exception cref="ArgumentException">The phrase is not a valid mnemonic.</exception>
+        public static KeyPair FromPhrase(
+            KeyType type, string phrase, string passphrase = "", bool compressed = true)
+        {
+            var seed = RecoveryPhrase.DeriveSeed(type, RecoveryPhrase.ToSeed(phrase, passphrase));
+            return FromSeed(type, seed, compressed);
+        }
+
+        /// <summary>
+        /// Recovers a secp256k1 key pair from a phrase made by
+        /// <c>@activeledger/sdk-bip39</c>.
+        /// </summary>
+        /// <remarks>
+        /// That scheme is SHA256(phrase) used directly as the scalar - no key
+        /// stretching, no domain separation, no passphrase. It exists so an
+        /// old phrase can be recovered, never so a new key can be made with
+        /// it.
+        ///
+        /// Deliberately does NOT validate the mnemonic: the original package
+        /// hashed the string as given and never consulted the wordlist, so
+        /// rejecting a phrase here that it accepted would make a recoverable
+        /// identity unrecoverable.
+        /// </remarks>
+        public static KeyPair FromLegacyPhrase(string phrase, bool compressed = true)
+        {
+            if (phrase == null)
+            {
+                throw new ArgumentNullException(nameof(phrase));
+            }
+
+            return FromSeed(
+                KeyType.Secp256k1, Sha256(Encoding.UTF8.GetBytes(phrase)), compressed);
+        }
+
+        /// <summary>
+        /// A SecureRandom that yields fixed bytes, so keygen is deterministic.
+        /// </summary>
+        /// <remarks>
+        /// Only for Falcon, which BouncyCastle offers no seed constructor
+        /// for. It cycles the seed rather than running out, because the
+        /// generator may ask for more bytes than the seed holds.
+        /// </remarks>
+        private sealed class FixedSecureRandom : SecureRandom
+        {
+            private readonly byte[] _seed;
+            private int _position;
+
+            internal FixedSecureRandom(byte[] seed) => _seed = seed;
+
+            public override void NextBytes(byte[] buffer)
+            {
+                for (var i = 0; i < buffer.Length; i++)
+                {
+                    buffer[i] = _seed[_position++ % _seed.Length];
+                }
             }
         }
 
