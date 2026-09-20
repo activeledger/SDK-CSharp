@@ -3,3 +3,8 @@ obj/
 artifacts/
 *.user
 .vs/
+
+# Packed output. Releases carry the .nupkg as an asset; a copy in git goes
+# stale the moment the version changes and misleads anyone who finds it.
+nupkg/
+*.nupkg
