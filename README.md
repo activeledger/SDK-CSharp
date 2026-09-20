@@ -15,9 +15,22 @@ post-quantum identities.
 
 ## Install
 
+> [!WARNING]
+> **`dotnet add package Activeledger.SDK` does not work** — this package is not
+> on NuGet yet. Take the `.nupkg` from the GitHub release and add it as a local
+> source:
+
 ```bash
-dotnet add package Activeledger.SDK
+gh release download v2.3.0 --repo activeledger/SDK-CSharp --dir ./packages
+dotnet add package Activeledger.SDK -v 2.3.0 -s ./packages
 ```
+
+Targets `netstandard2.0` and `net8.0`, so .NET Framework and Unity consumers
+work as well as modern ones.
+
+Verified: restores from the release `.nupkg` and derives keys for all three
+schemes.
+
 
 ## Quick start
 
