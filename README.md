@@ -21,8 +21,8 @@ post-quantum identities.
 > source:
 
 ```bash
-gh release download v2.3.0 --repo activeledger/SDK-CSharp --dir ./packages
-dotnet add package Activeledger.SDK -v 2.3.0 -s ./packages
+gh release download v2.4.0 --repo activeledger/SDK-CSharp --dir ./packages
+dotnet add package Activeledger.SDK -v 2.4.0 -s ./packages
 ```
 
 Targets `netstandard2.0` and `net8.0`, so .NET Framework and Unity consumers

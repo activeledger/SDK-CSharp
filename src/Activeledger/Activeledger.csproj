@@ -10,7 +10,7 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
 
     <PackageId>Activeledger.SDK</PackageId>
-    <Version>2.3.0</Version>
+    <Version>2.4.0</Version>
     <Authors>Activeledger</Authors>
     <Description>C# SDK for Activeledger, with post-quantum identity support (ML-DSA-65 and Falcon-512)</Description>
     <PackageTags>activeledger;blockchain;ledger;post-quantum;ml-dsa;falcon</PackageTags>
