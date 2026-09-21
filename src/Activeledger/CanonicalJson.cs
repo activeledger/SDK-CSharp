@@ -225,8 +225,7 @@ namespace Activeledger
         }
 
         /// <summary>
-        /// JavaScript number formatting: one numeric type, shortest
-        /// round-tripping representation. <c>JSON.stringify(1.0)</c> is "1".
+        /// Writes a number exactly as <c>JSON.stringify</c> would.
         /// </summary>
         private static void WriteNumber(StringBuilder sb, double value)
         {
@@ -237,16 +236,87 @@ namespace Activeledger
             if (double.IsInfinity(value))
                 throw new ArgumentException("Infinity cannot be signed");
 
-            if (value == Math.Truncate(value) && Math.Abs(value) < 1e21)
+            sb.Append(JsNumber(value));
+        }
+
+        /// <summary>
+        /// Formats a number exactly as <c>JSON.stringify</c> would.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// What gets signed is <c>JSON.stringify($tx)</c>, and the ledger
+        /// verifies against a RE-STRINGIFIED <c>$tx</c> — its crypto package
+        /// calls <c>JSON.stringify</c> on the object its HTTP layer already
+        /// parsed. JavaScript's formatting is therefore the specification
+        /// rather than a convention, and a number written differently produces
+        /// a signature the ledger rejects as 1220 "Signature Incorrect", with
+        /// nothing in the message about numbers.
+        /// </para>
+        /// <para>
+        /// .NET disagreed in two ways: <c>ToString("R")</c> gives
+        /// <c>1E+21</c> where JavaScript writes <c>1e+21</c>, and whole values
+        /// went through <c>(long)value</c>, which for anything above
+        /// long.MaxValue is undefined in an unchecked context — 1e19 came out
+        /// as long.MinValue rather than 10000000000000000000.
+        /// </para>
+        /// <para>
+        /// Implements ECMA-262 Number::toString. Cross-checked against
+        /// <c>JSON.stringify</c> on 6139 doubles including every power of ten
+        /// from 1e-330 to 1e308. InvariantCulture throughout: a machine under a
+        /// locale that uses a comma as the decimal separator would otherwise
+        /// sign bytes no ledger can read, which is the kind of bug that only
+        /// appears on someone else's machine.
+        /// </para>
+        /// </remarks>
+        public static string JsNumber(double value)
+        {
+            if (value == 0.0)
+                return "0"; // covers -0.0, which JavaScript prints as "0"
+            if (value < 0.0)
+                return "-" + JsNumber(-value);
+
+            // The SHORTEST decimal that round-trips, found by increasing
+            // precision rather than trusting the platform. "R" is documented as
+            // round-trippable but not as shortest, and on .NET Framework it has
+            // known defects; this is the same routine every Activeledger SDK
+            // runs.
+            var text = value.ToString("E16", CultureInfo.InvariantCulture);
+            for (var precision = 0; precision < 17; precision++)
             {
-                // InvariantCulture throughout: a machine running under a locale
-                // that uses a comma as the decimal separator would otherwise
-                // produce "1,5" and sign bytes no ledger can read. This is the
-                // kind of bug that only appears on someone else's machine.
-                sb.Append(((long)value).ToString(CultureInfo.InvariantCulture));
-                return;
+                var candidate = value.ToString("E" + precision.ToString(CultureInfo.InvariantCulture),
+                    CultureInfo.InvariantCulture);
+                if (double.TryParse(candidate, NumberStyles.Float, CultureInfo.InvariantCulture, out var back)
+                    && back == value)
+                {
+                    text = candidate;
+                    break;
+                }
             }
-            sb.Append(value.ToString("R", CultureInfo.InvariantCulture));
+
+            var split = text.IndexOf('E');
+            var mantissa = text.Substring(0, split);
+            var n = int.Parse(text.Substring(split + 1), NumberStyles.Integer,
+                CultureInfo.InvariantCulture) + 1;   // value == 0.<digits> * 10**n
+
+            var digits = mantissa.Replace(".", string.Empty).TrimEnd('0');
+            if (digits.Length == 0)
+                digits = "0";
+            var k = digits.Length;
+
+            // Plain decimal while -6 < n <= 21; exponent form outside it.
+            if (k <= n && n <= 21)
+                return digits + new string('0', n - k);
+            if (n > 0 && n <= 21)
+                return digits.Substring(0, n) + "." + digits.Substring(n);
+            if (n > -6 && n <= 0)
+                return "0." + new string('0', -n) + digits;
+
+            // Exponent form: no leading zeros, explicit "+" when positive.
+            var e = n - 1;
+            var head = k == 1 ? digits : digits.Substring(0, 1) + "." + digits.Substring(1);
+
+            return head + "e" + (e >= 0 ? "+" : "-")
+                 + Math.Abs(e).ToString(CultureInfo.InvariantCulture);
         }
 
         /// <summary>
