@@ -15,8 +15,13 @@
     <Description>C# SDK for Activeledger, with post-quantum identity support (ML-DSA-65 and Falcon-512)</Description>
     <PackageTags>activeledger;blockchain;ledger;post-quantum;ml-dsa;falcon</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <!-- Links on NuGet Sidebar -->
     <PackageProjectUrl>https://github.com/activeledger/SDK-CSharp</PackageProjectUrl>
     <RepositoryUrl>https://github.com/activeledger/SDK-CSharp</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+
+    <!-- Tells NuGet which packed file is the landing page README -->
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <!-- The BIP-39 wordlist. Embedded rather than shipped beside the assembly
@@ -40,6 +45,12 @@
          Verified against the published cross-language vectors: all 12 pass,
          6 ML-DSA-65 and 6 Falcon-512. -->
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
+  </ItemGroup>
+
+  <!-- Embeds the actual file into the root of the .nupkg bundle -->
+  <ItemGroup>
+    <!-- Adjust path if README.md is in the same folder as .csproj (use Include="README.md") -->
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
 </Project>
