@@ -5,6 +5,9 @@
   </picture>
 </a>
 
+[![NuGet](https://img.shields.io/nuget/v/Activeledger.SDK)](https://www.nuget.org/packages/Activeledger.SDK)
+[![licence](https://img.shields.io/badge/licence-MIT-blue)](https://github.com/activeledger/SDK-CSharp/blob/master/LICENSE)
+
 # Activeledger SDK for C#
 
 Build, sign and submit Activeledger transactions from .NET, with support for
