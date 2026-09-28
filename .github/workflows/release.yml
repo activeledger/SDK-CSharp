@@ -1,0 +1,124 @@
+# Cuts a release: test -> bump -> commit -> tag -> push -> publish -> verify.
+#
+# Dispatched by hand with a version rather than triggered by a tag. GitHub does
+# not start new workflow runs from events created with the default
+# GITHUB_TOKEN, so `on: push: tags` never fires for a tag a workflow pushed.
+#
+# The last job is the one that matters: restoring the package from nuget.org
+# into a fresh project. The API accepting an upload proves nothing.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, without the leading v (e.g. 2.5.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Test
+        run: dotnet test -c Release
+
+      - name: Bump
+        run: |
+          set -eu
+          v="${{ inputs.version }}"
+          sed -i "s|<Version>[^<]*</Version>|<Version>$v</Version>|" src/Activeledger/Activeledger.csproj
+          grep -q "<Version>$v</Version>" src/Activeledger/Activeledger.csproj
+
+      # -c Release throughout. Packing after a Debug build once shipped a
+      # Debug assembly inside a release .nupkg.
+      - name: Pack
+        run: dotnet pack src/Activeledger/Activeledger.csproj -c Release -o nupkg
+
+      - name: Commit, tag and push
+        run: |
+          set -eu
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore(release): v${{ inputs.version }}"
+          git tag -a "v${{ inputs.version }}" -m "v${{ inputs.version }}"
+          git push origin HEAD:master
+          git push origin "v${{ inputs.version }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nupkg
+          path: nupkg/
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "v${{ inputs.version }}" --title "v${{ inputs.version }}" --generate-notes nupkg/*.nupkg
+
+  publish:
+    needs: release
+    runs-on: ubuntu-latest
+    outputs:
+      # The `secrets` context is not available in a job-level `if`, so the
+      # verify job gates on this output rather than on the key directly - the
+      # condition would evaluate empty and skip silently.
+      published: ${{ steps.push.outcome == 'success' }}
+    env:
+      KEY_SET: ${{ secrets.NUGET_API_KEY != '' }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: nupkg
+          path: nupkg/
+
+      - name: Publish to NuGet
+        id: push
+        if: ${{ env.KEY_SET == 'true' }}
+        run: |
+          dotnet nuget push nupkg/*.nupkg \
+            --api-key "${{ secrets.NUGET_API_KEY }}" \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate
+
+      - name: Say so when skipped
+        if: ${{ env.KEY_SET != 'true' }}
+        run: echo "::warning::NUGET_API_KEY is not set - skipped nuget.org"
+
+  verify:
+    needs: [release, publish]
+    if: ${{ needs.publish.outputs.published == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      # NuGet indexes a new version asynchronously, so retry rather than fail -
+      # but do not pass silently if it never appears.
+      - name: Restore from nuget.org and use it
+        run: |
+          set -eu
+          v="${{ needs.release.outputs.version }}"
+          dotnet new console -o consumer && cd consumer
+          for i in $(seq 1 12); do
+            dotnet add package Activeledger.SDK -v "$v" && break
+            echo "not indexed yet (attempt $i)"; sleep 20
+          done
+          cat > Program.cs <<'CS'
+          using System;
+          using Activeledger;
+          // The number formatting is the thing a bad build loses quietly.
+          if (CanonicalJson.JsNumber(1e-7) != "1e-7") throw new Exception("1e-7");
+          if (CanonicalJson.JsNumber(1e21) != "1e+21") throw new Exception("1e+21");
+          Console.WriteLine("registry install verified");
+          CS
+          dotnet run
