@@ -1,3 +1,6 @@
+// The event API is deprecated; its behaviour stays tested until it is removed.
+#pragma warning disable CS0618
+
 using System;
 using System.Collections.Generic;
 using System.Linq;

@@ -130,6 +130,14 @@ namespace Activeledger
     }
 
     /// <summary>One server-sent event.</summary>
+    /// <remarks>
+    /// Deprecated. ActiveCore is deprecated and no longer serves events. A node
+    /// serves contract events from its own storage service, which must never
+    /// be reachable beyond the node's host, so a client has nothing it should
+    /// connect to. Run your own server-sent events listener on the node's host
+    /// instead. This will be removed in the next major version.
+    /// </remarks>
+    [Obsolete("Events are served on the node's host only; ActiveCore is deprecated. Run your own server-sent events listener on the node's host. Removed in the next major version.")]
     public sealed class LedgerEvent
     {
         internal LedgerEvent(string? name, string data, string? id)
@@ -176,7 +184,9 @@ namespace Activeledger
         public ActiveledgerClient(string baseUrl, HttpClient? http = null, string? coreUrl = null)
         {
             BaseUrl = baseUrl.TrimEnd('/');
+#pragma warning disable CS0618 // CoreUrl is deprecated, but still set until it is removed
             CoreUrl = coreUrl?.TrimEnd('/');
+#pragma warning restore CS0618
             _ownsHttp = http is null;
             _http = http ?? new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
         }
@@ -185,6 +195,8 @@ namespace Activeledger
         public string BaseUrl { get; }
 
         /// <summary>The Activecore URL, without a trailing slash, or null if not configured.</summary>
+        /// <remarks>Deprecated, with <see cref="SubscribeAsync"/>.</remarks>
+        [Obsolete("Events are served on the node's host only; ActiveCore is deprecated. Run your own server-sent events listener on the node's host. Removed in the next major version.")]
         public string? CoreUrl { get; }
 
         /// <summary>Submits a signed transaction.</summary>
@@ -242,7 +254,14 @@ namespace Activeledger
         /// (heartbeats) are ignored rather than delivered as empty events, and
         /// <c>event:</c>/<c>id:</c> do not leak into the following event.
         /// </para>
+        /// <para>
+        /// Deprecated. ActiveCore is deprecated and no longer serves events; a
+        /// node's own events feed is reachable only from the node's host. Run
+        /// your own server-sent events listener there. Removed in the next
+        /// major version.
+        /// </para>
         /// </remarks>
+        [Obsolete("Events are served on the node's host only; ActiveCore is deprecated. Run your own server-sent events listener on the node's host. Removed in the next major version.")]
         public async IAsyncEnumerable<LedgerEvent> SubscribeAsync(
             string pathOrUrl,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -343,6 +362,7 @@ namespace Activeledger
             }
         }
 
+        [Obsolete("Events are served on the node's host only; ActiveCore is deprecated. Run your own server-sent events listener on the node's host. Removed in the next major version.")]
         private string RequireCore()
         {
             if (string.IsNullOrEmpty(CoreUrl))
@@ -366,6 +386,7 @@ namespace Activeledger
         /// so a subscriber watching there sees nothing for a transaction that
         /// emitted no event -- which looks exactly like a broken subscription.
         /// </remarks>
+        [Obsolete("Events are served on the node's host only; ActiveCore is deprecated. Run your own server-sent events listener on the node's host. Removed in the next major version.")]
         public IAsyncEnumerable<LedgerEvent> SubscribeToActivityAsync(
             string? streamId = null, CancellationToken cancellationToken = default)
         {
@@ -379,6 +400,7 @@ namespace Activeledger
         /// Subscribes to events emitted by contracts: all of them, those from
         /// one contract, or one named event from one contract.
         /// </summary>
+        [Obsolete("Events are served on the node's host only; ActiveCore is deprecated. Run your own server-sent events listener on the node's host. Removed in the next major version.")]
         public IAsyncEnumerable<LedgerEvent> SubscribeToContractEventsAsync(
             string? contract = null, string? eventName = null,
             CancellationToken cancellationToken = default)

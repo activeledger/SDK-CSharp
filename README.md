@@ -289,167 +289,17 @@ foreach (var value in response.Responses)
 
 `response.NewStreams` gives the ids of any streams the transaction created.
 
-## Events (SSE)
+## Events (SSE) - deprecated
 
-Event streams are served by **Activecore**, which is a separate service on its
-own port — not a path on the node. Pointing a subscription at a node returns
-403, so the URL is supplied separately and the SDK throws a message that says
-which one is missing rather than quietly producing an empty stream.
+`SubscribeAsync`, `SubscribeToActivityAsync` and `SubscribeToContractEventsAsync` are **deprecated** and will be removed in the next major version.
 
-```csharp
-using var client = new ActiveledgerClient(
-    "http://localhost:5260",
-    coreUrl: "http://localhost:5261");
+Events are no longer served by ActiveCore, which is itself deprecated and
+should not be used. A node serves contract events from its own storage
+service at `http://localhost:<storage port>/activeledgerevents/events`, and
+that service must never be reachable beyond the node's host - so a client
+SDK has nothing it should connect to.
 
-using var cts = new CancellationTokenSource();
-
-// Every stream change on the ledger
-await foreach (var e in client.SubscribeToActivityAsync(cancellationToken: cts.Token))
-{
-    Console.WriteLine(e.Data);
-}
-
-// Changes to one stream
-await foreach (var e in client.SubscribeToActivityAsync(streamId, cts.Token)) { }
-
-// Events a contract emitted: all, by contract, or one named event
-await foreach (var e in client.SubscribeToContractEventsAsync()) { }
-await foreach (var e in client.SubscribeToContractEventsAsync("mycontract")) { }
-await foreach (var e in client.SubscribeToContractEventsAsync("mycontract", "transfer")) { }
-```
-
-**Activity and contract events are different feeds.** Activity fires for stream
-changes, so it is what an ordinary transaction produces. Contract events carry
-only what a contract explicitly emitted — subscribe there for a transaction
-that emits nothing and you will correctly receive nothing, which looks exactly
-like a broken subscription.
-
-Each `LedgerEvent` has `Data`, and `Name` and `Id` when the server sent them.
-Multiple `data:` lines join with newlines, and `:` heartbeat comments are
-ignored rather than delivered as empty events.
-
-Cancelling the token closes the connection. It really does close it: the token
-passed to a request only covers sending it and reading the headers, so the SDK
-also disposes the stream on cancellation. Without that, cancelling an idle
-subscription would leave it blocked until the server next sent something.
-
-`SubscribeAsync(pathOrUrl)` takes a raw path or an absolute URL, for endpoints
-not covered above.
-
-## Signing elsewhere
-
-`ISigner` is all the SDK needs, so keys can live in an HSM, a remote signing
-service or a user's wallet:
-
-```csharp
-public sealed class HsmSigner : ISigner
-{
-    public KeyType KeyType => KeyType.MlDsa65;
-    public string PublicKey => /* ... */;
-    public byte[] Sign(byte[] message) => /* ... */;
-}
-```
-
-`Sign` receives the canonical bytes of `$tx` and returns a raw signature; the
-SDK base64-encodes it.
-
-## Things that will bite you
-
-**A rejected transaction is an HTTP 200.** The ledger answers 200 and reports
-the problem in the body. Check `response.Committed` — code that treats the HTTP
-status as success will report commits that never happened, and will keep doing
-so until something downstream notices the data is missing.
-
-**Every signature problem is reported as 1220 "Signature Incorrect".** A wrong
-key type, a missing `type`, wrong-length key material and genuinely bad bytes
-all produce that one message. `tx.SignedBytes()` is usually the quickest way in.
-
-**A missing `type` defaults to `rsa`.** The ledger then tries RSA verification
-against whatever it was given. This SDK always sends the type explicitly.
-
-**Namespaces are claimed permanently.** A test that registers a fixed namespace
-passes once and fails every re-run against the same network, which reads like a
-regression and is not one.
-
-**Consensus is a majority.** When a submission returns, most nodes have
-committed and the rest may still be writing. Reading immediately from a
-specific node is a race.
-
-## Canonical JSON
-
-Signatures cover the exact bytes of `JSON.stringify($tx)` encoded as UTF-8 — no
-hash prefix, no length prefix, no domain separator and **no key sorting**. A
-signature over bytes that differ by a single escape is invalid.
-
-`System.Text.Json` cannot produce these bytes: it escapes non-ASCII and
-HTML-sensitive characters by default, and gives no insertion-order guarantee
-for a dictionary. Both defects produce correct output for an ASCII-only payload
-with one key, which is what makes them dangerous. So this SDK has its own
-serialiser and its own insertion-ordered object:
-
-```csharp
-var payload = new JsonObject()
-    .Set("zebra", 1)          // stays first - not sorted
-    .Set("alpha", "text")
-    .Set("nested", new JsonObject().Set("flag", true))
-    .Set("list", new JsonArray().Add(1).Add("two"));
-
-string json  = CanonicalJson.Stringify(payload);
-byte[] bytes = CanonicalJson.Bytes(payload);
-```
-
-Numbers follow JavaScript: one numeric type, so `1.0` serialises as `1`. `NaN`
-and infinity are refused rather than silently written as `null`. Formatting is
-invariant-culture throughout, so a machine with a comma decimal separator does
-not sign `1,5`.
-
-## Testing
-
-```bash
-dotnet test
-```
-
-The live-network tests skip unless a ledger is configured. To run them, start a
-network from an `activeledger` checkout:
-
-```bash
-npm run test:network:serve
-```
-
-then run with the URLs it prints:
-
-```bash
-AL_NODES=http://127.0.0.1:5510,http://127.0.0.1:5520 \
-AL_STORAGE=http://127.0.0.1:5509,http://127.0.0.1:5519 \
-dotnet test
-```
-
-They onboard real post-quantum identities, verify what the ledger actually
-recorded, check that a tampered payload is rejected, and open a real event
-stream.
-
-## Migrating from 1.x
-
-Version 2 is a rewrite. The old `ActiveLedgerLib` types are gone, along with
-the vendored `BouncyCastle.Crypto.dll` and `Newtonsoft.Json.dll` — both are now
-NuGet references, and JSON that gets signed goes through `CanonicalJson` rather
-than `Newtonsoft.Json`, which cannot reproduce the required byte sequence.
-
-| 1.x | 2.x |
-|---|---|
-| `GenerateKeyPair` | `KeyPair.Generate(KeyType)` |
-| `GenerateTx` / `GenerateTxJson` | `Transaction.Builder()` |
-| `GenerateSignature` | handled by `Build()` / `Transaction.Onboard()` |
-| `MakeRequest` | `ActiveledgerClient` |
-| `SDKPreferences` | constructor arguments |
-
-### 2.0 to 2.1
-
-`ISigner.PublicKeyBase64` is now `ISigner.PublicKey`, and `KeyPair`'s
-`PublicKeyBase64` / `PrivateKeyBase64` are `PublicKey` / `PrivateKey`. The old
-names described only the post-quantum encoding and would have been actively
-wrong for secp256k1, which is hex.
-
-## Licence
-
-MIT
+To react to events, run your own server-sent events listener on the node's
+host and relay what your application needs through your own backend. Each
+event is an SSE frame whose `id` is `<milliseconds>-<counter>,<umid>` and
+whose `data` is `{"name", "data", "phase", "contract"}`.
