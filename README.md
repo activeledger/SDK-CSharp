@@ -123,9 +123,11 @@ consumer built against.
 | `KeyType.Secp256k1` | `secp256k1` | 33 or 65 | 32 | **~70–72, variable** | `0x` hex |
 | `KeyType.Rsa` | `rsa` | — | — | — | not implemented |
 
-**RSA is deliberately not implemented.** It is the ledger's fallback when a
-transaction omits `type`, which is precisely why this SDK always sends the type
-explicitly.
+**RSA is deliberately not implemented.** `KeyType.Rsa` exists in the enum so
+the ledger's wire string can be named, but `KeyPair.Generate`, `Sign` and
+`Verify` throw `NotSupportedException` for it. RSA is the ledger's fallback
+when a transaction omits `type`, which is precisely why this SDK always sends
+the type explicitly.
 
 ### Which to choose
 
@@ -215,11 +217,6 @@ private key — which is why they are 897 and 1281 rather than 896 and 1280.
 BouncyCastle strips it; this SDK adds it back, because the ledger stores the
 headered form. A key that is 896 bytes has had its header removed somewhere,
 and this SDK says so by name rather than reporting a generic length error.
-
-**Signing is hedged**, not deterministic: fresh entropy goes into every
-signature, so signing the same message twice produces different bytes. This
-matches the reference implementation. Never compare signatures for equality —
-verify them.
 
 **The post-quantum schemes are hedged**, so signing the same message twice
 produces different bytes. Never compare those for equality — verify them.
