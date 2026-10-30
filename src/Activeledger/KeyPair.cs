@@ -593,6 +593,17 @@ namespace Activeledger
                     $"secp256k1 public key starts with 0x{prefix:x2}, which does not match its " +
                     $"length of {bytes.Length} bytes (expected 0x02/0x03 for 33, 0x04 for 65)");
             }
+
+            // The prefix and length can be right while the point is not on the
+            // curve; accepting it would defer the failure to verification.
+            try
+            {
+                Secp256k1Domain.Curve.DecodePoint(bytes);
+            }
+            catch (Exception ex) when (ex is ArgumentException or FormatException)
+            {
+                throw new ArgumentException("secp256k1 public key is not a point on the curve", ex);
+            }
         }
 
         private static int PublicSize(KeyType type) => type switch

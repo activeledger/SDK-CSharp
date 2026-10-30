@@ -514,5 +514,34 @@ namespace Activeledger.Tests
             var pqSig = Convert.ToBase64String(pq.Sign(message)).Length;
             Assert.True(ecSig * 20 < pqSig, "secp256k1 signature should be at least 20x smaller");
         }
+
+        // 04||X||Y with Y nudged off the curve (the generator's Y plus one).
+        private const string OffCurveUncompressed =
+            "0x0479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798" +
+            "483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b9";
+
+        [Fact]
+        public void AnUncompressedPointNotOnTheCurveIsRejected()
+        {
+            Assert.Throws<ArgumentException>(
+                () => KeyPair.FromPublic(KeyType.Secp256k1, OffCurveUncompressed));
+        }
+
+        [Fact]
+        public void AnUncompressedPointOfZerosOrWithCoordinatesAboveThePrimeIsRejected()
+        {
+            Assert.Throws<ArgumentException>(
+                () => KeyPair.FromPublic(KeyType.Secp256k1, "0x04" + new string('0', 128)));
+            Assert.Throws<ArgumentException>(
+                () => KeyPair.FromPublic(KeyType.Secp256k1, "0x04" + new string('f', 128)));
+        }
+
+        [Fact]
+        public void ACompressedXWithNoPointOnTheCurveIsRejected()
+        {
+            // x = 5 has no square root of x^3 + 7 modulo the field prime.
+            Assert.Throws<ArgumentException>(
+                () => KeyPair.FromPublic(KeyType.Secp256k1, "0x02" + new string('0', 63) + "5"));
+        }
     }
 }
