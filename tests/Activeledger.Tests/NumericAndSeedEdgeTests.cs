@@ -211,6 +211,39 @@ namespace Activeledger.Tests
             Assert.True(KeyPair.FromSeed(KeyType.Secp256k1, Hex(nMinusOne)).CanSign);
         }
 
+        private const string Phrase =
+            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+
+        // Precomposed and decomposed spellings of the same passphrase must give
+        // the same seed (BIP-39 requires NFKD) -- or, where the runtime cannot
+        // normalise (this project runs InvariantGlobalization), be refused
+        // rather than silently derive a different key.
+        [Fact]
+        public void EquivalentUnicodeSpellingsOfAPassphraseNeverDeriveDifferentSeeds()
+        {
+            var precomposed = "caf\u00e9";
+            var decomposed = "cafe\u0301";
+            var normalises = "\u00e9".Normalize(System.Text.NormalizationForm.FormKD).Length == 2;
+
+            if (normalises)
+            {
+                Assert.Equal(
+                    RecoveryPhrase.ToSeed(Phrase, precomposed),
+                    RecoveryPhrase.ToSeed(Phrase, decomposed));
+            }
+            else
+            {
+                Assert.Throws<PlatformNotSupportedException>(() => RecoveryPhrase.ToSeed(Phrase, precomposed));
+                Assert.Throws<PlatformNotSupportedException>(() => RecoveryPhrase.ToSeed(Phrase, decomposed));
+            }
+        }
+
+        [Fact]
+        public void AnAsciiPassphraseNeedsNoNormalisation()
+        {
+            Assert.Equal(64, RecoveryPhrase.ToSeed(Phrase, "TREZOR").Length);
+        }
+
         [Fact]
         public void TheCompressedFlagChoosesTheSecp256k1PublicKeyForm()
         {
