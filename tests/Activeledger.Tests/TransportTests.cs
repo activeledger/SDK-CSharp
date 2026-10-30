@@ -272,7 +272,7 @@ namespace Activeledger.Tests
             var response = await client.SubmitRawAsync("{}");
 
             Assert.False(response.Committed);
-            Assert.Equal(new[] { "Stream(s) not found" }, response.Errors);
+            Assert.Equal(new[] { $"HTTP status {status}", "Stream(s) not found" }, response.Errors);
             Assert.Equal(RejectedReply, response.Raw);
         }
 

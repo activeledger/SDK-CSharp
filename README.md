@@ -59,7 +59,9 @@ var response = await client.SubmitAsync(tx);
 
 if (!response.Committed)
 {
-    // NOT the HTTP status. See "A rejected transaction is an HTTP 200" below.
+    // A ledger rejection arrives as HTTP 200 with errors in the body. Committed
+    // is also false for a non-2xx status or a body that is not a JSON object
+    // (an empty body, an HTML 502); Errors says why. The getters never throw.
     Console.WriteLine(string.Join(", ", response.Errors));
 }
 ```
@@ -92,6 +94,16 @@ and the only symptom is the ledger not recognising it.
 
 `KeyPair.FromLegacyPhrase` recovers a phrase made by the older
 `@activeledger/sdk-bip39` package — recovery only, never for new keys.
+
+### Passphrases and Unicode
+
+BIP-39 puts the passphrase through Unicode NFKD, so `"caf\u00e9"` and
+`"cafe\u0301"` must give the same seed. .NET cannot normalise when
+`InvariantGlobalization` is on (or ICU is missing): `string.Normalize` returns
+non-ASCII text unchanged there. In that case `RecoveryPhrase.ToSeed` (and so
+`KeyPair.FromPhrase`) throws `PlatformNotSupportedException` for any passphrase
+containing a non-ASCII character, rather than derive a key that differs from
+other hosts. ASCII passphrases work in every mode.
 
 ### The derivation
 

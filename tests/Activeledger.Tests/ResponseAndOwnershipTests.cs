@@ -21,7 +21,12 @@ namespace Activeledger.Tests
         private sealed class TrackingHandler : HttpMessageHandler
         {
             private readonly string _body;
-            public TrackingHandler(string body = "{}") => _body = body;
+            private readonly HttpStatusCode _status;
+            public TrackingHandler(string body = "{}", HttpStatusCode status = HttpStatusCode.OK)
+            {
+                _body = body;
+                _status = status;
+            }
 
             public bool Disposed { get; private set; }
             public int Requests { get; private set; }
@@ -32,7 +37,7 @@ namespace Activeledger.Tests
             {
                 Requests++;
                 Method = request.Method.Method;
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                return Task.FromResult(new HttpResponseMessage(_status)
                 {
                     Content = new StringContent(_body, new UTF8Encoding(false), "application/json"),
                 });
@@ -45,10 +50,10 @@ namespace Activeledger.Tests
             }
         }
 
-        private static async Task<LedgerResponse> Respond(string body)
+        private static async Task<LedgerResponse> Respond(string body, HttpStatusCode status = HttpStatusCode.OK)
         {
             var client = new ActiveledgerClient(
-                "http://node.example:5260", new HttpClient(new TrackingHandler(body)));
+                "http://node.example:5260", new HttpClient(new TrackingHandler(body, status)));
             return await client.SubmitRawAsync("{}");
         }
 
@@ -121,15 +126,90 @@ namespace Activeledger.Tests
         [Theory]
         [InlineData("")]
         [InlineData("   ")]
-        public async Task BlankBodiesYieldEmptyCollectionsRatherThanThrowing(string body)
+        public async Task BlankBodiesAreNotCommittedAndDoNotThrow(string body)
         {
             var response = await Respond(body);
 
-            Assert.Empty(response.Errors);
+            Assert.False(response.Committed);
+            Assert.NotEmpty(response.Errors);
             Assert.Empty(response.NewStreams);
             Assert.Empty(response.Responses);
             Assert.Equal(body, response.Raw);
             Assert.Equal(body, response.ToString());
+        }
+
+        [Theory]
+        [InlineData("null")]
+        [InlineData("[]")]
+        [InlineData("[1,2]")]
+        [InlineData("\"text\"")]
+        [InlineData("42")]
+        [InlineData("true")]
+        [InlineData("not json")]
+        public async Task ABodyThatIsNotAJsonObjectIsNotCommittedAndNeverThrows(string body)
+        {
+            var response = await Respond(body);
+
+            Assert.False(response.Committed);
+            Assert.NotEmpty(response.Errors);
+            Assert.Empty(response.NewStreams);
+            Assert.Empty(response.Responses);
+        }
+
+        [Theory]
+        [InlineData("{\"$summary\":null,\"$streams\":null,\"$responses\":null}")]
+        [InlineData("{\"$summary\":[],\"$streams\":[]}")]
+        [InlineData("{\"$summary\":\"x\",\"$streams\":\"x\"}")]
+        [InlineData("{\"$streams\":{\"new\":[1,null,\"a\",{\"id\":5}]}}")]
+        public async Task MalformedSectionsNeverThrow(string body)
+        {
+            var response = await Respond(body);
+
+            Assert.Empty(response.NewStreams);
+            Assert.Empty(response.Responses);
+            Assert.Null(Record.Exception(() => response.Errors));
+            Assert.Null(Record.Exception(() => response.Committed));
+        }
+
+        [Theory]
+        [InlineData(HttpStatusCode.InternalServerError)]
+        [InlineData(HttpStatusCode.BadGateway)]
+        [InlineData(HttpStatusCode.NotFound)]
+        [InlineData(HttpStatusCode.Redirect)]
+        public async Task ANon2xxStatusIsNotCommittedEvenWithACleanJsonBody(HttpStatusCode status)
+        {
+            var response = await Respond("{\"$summary\":{\"errors\":[]}}", status);
+
+            Assert.False(response.Committed);
+            Assert.Contains(((int)status).ToString(), response.Errors[0]);
+            Assert.Equal((int)status, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task AnEmptyBodyOn200IsNotCommitted()
+        {
+            var response = await Respond("", HttpStatusCode.OK);
+            Assert.False(response.Committed);
+        }
+
+        [Fact]
+        public async Task AnHtmlGatewayPageIsNotCommitted()
+        {
+            var response = await Respond("<html>502</html>", HttpStatusCode.BadGateway);
+
+            Assert.False(response.Committed);
+            Assert.Equal(2, response.Errors.Count);
+        }
+
+        [Fact]
+        public async Task OnboardingThrowsOnANon2xxStatus()
+        {
+            var http = new HttpClient(new TrackingHandler(
+                "{\"$streams\":{\"new\":[{\"id\":\"abc\"}]}}", HttpStatusCode.InternalServerError));
+            using var client = new ActiveledgerClient("http://node.example:5260", http);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => client.OnboardAsync(KeyPair.Generate(KeyType.Secp256k1)));
         }
 
         [Fact]

@@ -15,9 +15,10 @@ namespace Activeledger
     {
         private readonly JsonDocument? _doc;
 
-        internal LedgerResponse(string raw)
+        internal LedgerResponse(string raw, int statusCode = 200)
         {
             Raw = raw;
+            StatusCode = statusCode;
             try
             {
                 _doc = string.IsNullOrWhiteSpace(raw) ? null : JsonDocument.Parse(raw);
@@ -30,6 +31,12 @@ namespace Activeledger
 
         /// <summary>The response body exactly as the node sent it.</summary>
         public string Raw { get; }
+
+        /// <summary>The HTTP status code the node answered with.</summary>
+        public int StatusCode { get; }
+
+        private JsonElement? Root =>
+            _doc is not null && _doc.RootElement.ValueKind == JsonValueKind.Object ? _doc.RootElement : null;
 
         /// <summary>
         /// Errors the network reported.
@@ -46,8 +53,17 @@ namespace Activeledger
             get
             {
                 var result = new List<string>();
-                if (_doc is null) return result;
-                if (_doc.RootElement.TryGetProperty("$summary", out var summary) &&
+                if (StatusCode < 200 || StatusCode > 299)
+                {
+                    result.Add($"HTTP status {StatusCode}");
+                }
+                if (Root is not { } root)
+                {
+                    result.Add("the response body was not a JSON object");
+                    return result;
+                }
+                if (root.TryGetProperty("$summary", out var summary) &&
+                    summary.ValueKind == JsonValueKind.Object &&
                     summary.TryGetProperty("errors", out var errors) &&
                     errors.ValueKind == JsonValueKind.Array)
                 {
@@ -60,7 +76,10 @@ namespace Activeledger
             }
         }
 
-        /// <summary>True when <see cref="Errors"/> is empty. This, not the HTTP status.</summary>
+        /// <summary>
+        /// True when <see cref="Errors"/> is empty: the HTTP status was 2xx, the body
+        /// was a JSON object, and the ledger reported no errors.
+        /// </summary>
         public bool Committed => Errors.Count == 0;
 
         /// <summary>Stream ids this transaction created.</summary>
@@ -69,14 +88,17 @@ namespace Activeledger
             get
             {
                 var result = new List<string>();
-                if (_doc is null) return result;
-                if (_doc.RootElement.TryGetProperty("$streams", out var streams) &&
+                if (Root is not { } root) return result;
+                if (root.TryGetProperty("$streams", out var streams) &&
+                    streams.ValueKind == JsonValueKind.Object &&
                     streams.TryGetProperty("new", out var created) &&
                     created.ValueKind == JsonValueKind.Array)
                 {
                     foreach (var item in created.EnumerateArray())
                     {
-                        if (item.TryGetProperty("id", out var id) && id.GetString() is { } value)
+                        if (item.ValueKind == JsonValueKind.Object &&
+                            item.TryGetProperty("id", out var id) &&
+                            id.ValueKind == JsonValueKind.String && id.GetString() is { } value)
                         {
                             result.Add(value);
                         }
@@ -92,8 +114,8 @@ namespace Activeledger
             get
             {
                 var result = new List<JsonElement>();
-                if (_doc is null) return result;
-                if (_doc.RootElement.TryGetProperty("$responses", out var responses) &&
+                if (Root is not { } root) return result;
+                if (root.TryGetProperty("$responses", out var responses) &&
                     responses.ValueKind == JsonValueKind.Array)
                 {
                     foreach (var item in responses.EnumerateArray())
@@ -217,7 +239,7 @@ namespace Activeledger
             using var response = await _http.PostAsync(BaseUrl + "/", content, cancellationToken)
                 .ConfigureAwait(false);
             var raw = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-            return new LedgerResponse(raw);
+            return new LedgerResponse(raw, (int)response.StatusCode);
         }
 
         /// <summary>
@@ -231,7 +253,7 @@ namespace Activeledger
         public async Task<Identity> OnboardAsync(ISigner signer, CancellationToken cancellationToken = default)
         {
             var response = await SubmitAsync(Transaction.Onboard(signer), cancellationToken).ConfigureAwait(false);
-            if (response.NewStreams.Count == 0)
+            if (!response.Committed || response.NewStreams.Count == 0)
             {
                 throw new InvalidOperationException($"Onboard failed: {response.Raw}");
             }
@@ -313,6 +335,10 @@ namespace Activeledger
                     // a thread until the next event arrives. A null from
                     // ReadLineAsync is the real end-of-stream signal.
                     line = await reader.ReadLineAsync().ConfigureAwait(false);
+                    // Disposing the stream can surface as end-of-stream rather
+                    // than an exception, which would end the sequence cleanly
+                    // instead of reporting the cancellation.
+                    if (line is null) cancellationToken.ThrowIfCancellationRequested();
                 }
                 catch (Exception) when (cancellationToken.IsCancellationRequested)
                 {
