@@ -45,6 +45,11 @@ namespace Activeledger
         private readonly byte[] _public;
         private readonly byte[]? _private;
 
+        // Decoding the 4032-byte ML-DSA-65 private key costs about a fifth of a
+        // signature, and the key never changes, so it is decoded once. The
+        // parameters object is immutable; a race only decodes it twice.
+        private MLDsaPrivateKeyParameters? _mlDsaPrivate;
+
         private KeyPair(KeyType type, byte[] publicBytes, byte[]? privateBytes)
         {
             KeyType = type;
@@ -424,7 +429,8 @@ namespace Activeledger
             {
                 case KeyType.MlDsa65:
                 {
-                    var key = MLDsaPrivateKeyParameters.FromEncoding(MLDsaParameters.ml_dsa_65, _private);
+                    var key = _mlDsaPrivate ??=
+                        MLDsaPrivateKeyParameters.FromEncoding(MLDsaParameters.ml_dsa_65, _private);
                     var signer = new MLDsaSigner(MLDsaParameters.ml_dsa_65, deterministic: false);
                     // ParametersWithRandom selects the hedged variant, matching
                     // the reference implementation. A bare key would give
