@@ -192,6 +192,26 @@ namespace Activeledger.Tests
             Assert.False(response.Committed);
         }
 
+        [Theory]
+        [InlineData("{}")]
+        [InlineData("{\"$streams\":{\"new\":[{\"id\":\"s\"}]}}")]
+        [InlineData("{\"$summary\":null}")]
+        [InlineData("{\"$summary\":[]}")]
+        [InlineData("{\"$summary\":\"ok\"}")]
+        public async Task A200ObjectWithoutASummaryObjectIsNotCommitted(string body)
+        {
+            var response = await Respond(body);
+
+            Assert.False(response.Committed);
+            Assert.Contains("the response had no $summary object", response.Errors);
+        }
+
+        [Fact]
+        public async Task ASummaryWithoutErrorsOrCommitCountIsStillCommitted()
+        {
+            Assert.True((await Respond("{\"$summary\":{}}")).Committed);
+        }
+
         [Fact]
         public async Task AnHtmlGatewayPageIsNotCommitted()
         {
@@ -300,7 +320,7 @@ namespace Activeledger.Tests
         {
             var client = new ActiveledgerClient(
                 "http://node.example:5260",
-                new HttpClient(new TrackingHandler("{\"$streams\":{\"new\":[{\"id\":\"one\"},{\"id\":\"two\"}]}}")));
+                new HttpClient(new TrackingHandler("{\"$summary\":{\"errors\":[]},\"$streams\":{\"new\":[{\"id\":\"one\"},{\"id\":\"two\"}]}}")));
 
             var identity = await client.OnboardAsync(KeyPair.Generate(KeyType.Secp256k1));
             Assert.Equal("one", identity.StreamId);

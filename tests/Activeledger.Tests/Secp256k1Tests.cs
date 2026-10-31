@@ -325,8 +325,10 @@ namespace Activeledger.Tests
             scalar[31] = 0x2a;
             var hex = "0x" + BitConverter.ToString(scalar).Replace("-", "").ToLowerInvariant();
 
-            var generated = KeyPair.Generate(KeyType.Secp256k1);
-            var restored = KeyPair.FromKeys(KeyType.Secp256k1, generated.PublicKey, hex);
+            // The public key must be the one the scalar derives: FromKeys checks.
+            var derived = KeyPair.FromSeed(KeyType.Secp256k1, scalar);
+            Assert.Equal(hex, derived.PrivateKey);
+            var restored = KeyPair.FromKeys(KeyType.Secp256k1, derived.PublicKey, hex);
 
             Assert.Equal(hex, restored.PrivateKey);
             Assert.Equal(66, restored.PrivateKey.Length);

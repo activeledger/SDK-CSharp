@@ -329,7 +329,62 @@ namespace Activeledger
             var privateBytes = Decode(type, privateKey, "private");
             CheckPublicLength(type, publicBytes);
             CheckLength(type, privateBytes, PrivateSize(type), "private");
-            return new KeyPair(type, publicBytes, privateBytes);
+            var pair = new KeyPair(type, publicBytes, privateBytes);
+            pair.CheckHalvesBelongTogether();
+            return pair;
+        }
+
+        // A mismatched pair would otherwise build fine and then sign
+        // transactions the ledger rejects as 1220 "Signature Incorrect".
+        // Rsa is not checked: the SDK cannot sign with it.
+        private void CheckHalvesBelongTogether()
+        {
+            const string mismatch = "The private key does not belong to the public key";
+            switch (KeyType)
+            {
+                case KeyType.Secp256k1:
+                {
+                    var d = new BigInteger(1, _private!);
+                    if (d.SignValue == 0 || d.CompareTo(Secp256k1Domain.N) >= 0)
+                    {
+                        throw new ArgumentException("The secp256k1 private key is not a valid scalar");
+                    }
+                    var derived = Secp256k1Domain.G.Multiply(d).Normalize();
+                    Org.BouncyCastle.Math.EC.ECPoint given;
+                    try
+                    {
+                        given = Secp256k1Domain.Curve.DecodePoint(_public).Normalize();
+                    }
+                    catch (Exception e) when (e is ArgumentException || e is FormatException)
+                    {
+                        throw new ArgumentException("The secp256k1 public key is not a point on the curve", e);
+                    }
+                    if (!derived.Equals(given))
+                    {
+                        throw new ArgumentException(mismatch);
+                    }
+                    break;
+                }
+                case KeyType.MlDsa65:
+                case KeyType.Falcon512:
+                {
+                    var message = new byte[] { 0x41, 0x4c, 0x20, 0x6b, 0x65, 0x79, 0x20, 0x63, 0x68, 0x65, 0x63, 0x6b };
+                    bool ok;
+                    try
+                    {
+                        ok = Verify(message, Sign(message));
+                    }
+                    catch (Exception e) when (!(e is OutOfMemoryException))
+                    {
+                        throw new ArgumentException(mismatch, e);
+                    }
+                    if (!ok)
+                    {
+                        throw new ArgumentException(mismatch);
+                    }
+                    break;
+                }
+            }
         }
 
         // -- signing --------------------------------------------------------

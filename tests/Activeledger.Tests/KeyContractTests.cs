@@ -128,6 +128,42 @@ namespace Activeledger.Tests
             Assert.Throws<ArgumentException>(() => KeyPair.FromKeys(KeyType.MlDsa65, key.PublicKey, short1));
         }
 
+        [Theory]
+        [InlineData(KeyType.MlDsa65)]
+        [InlineData(KeyType.Falcon512)]
+        [InlineData(KeyType.Secp256k1)]
+        public void FromKeysRejectsAPrivateKeyThatDoesNotBelongToThePublicKey(KeyType type)
+        {
+            var one = KeyPair.Generate(type);
+            var other = KeyPair.Generate(type);
+
+            var error = Assert.Throws<ArgumentException>(
+                () => KeyPair.FromKeys(type, one.PublicKey, other.PrivateKey));
+            Assert.Contains("does not belong", error.Message);
+        }
+
+        [Fact]
+        public void FromKeysChecksBothSecp256k1PublicKeyForms()
+        {
+            var compressed = KeyPair.Generate(KeyType.Secp256k1, compressed: true);
+            var uncompressed = KeyPair.FromSeed(KeyType.Secp256k1, Convert.FromBase64String(
+                "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA="), compressed: false);
+
+            Assert.Equal(68, KeyPair.FromKeys(KeyType.Secp256k1, compressed.PublicKey, compressed.PrivateKey).PublicKey.Length);
+            var rebuilt = KeyPair.FromKeys(KeyType.Secp256k1, uncompressed.PublicKey, uncompressed.PrivateKey);
+            Assert.Equal(132, rebuilt.PublicKey.Length);
+            Assert.Throws<ArgumentException>(
+                () => KeyPair.FromKeys(KeyType.Secp256k1, uncompressed.PublicKey, compressed.PrivateKey));
+        }
+
+        [Fact]
+        public void FromKeysRejectsASecp256k1ScalarOfZero()
+        {
+            var key = KeyPair.Generate(KeyType.Secp256k1);
+            Assert.Throws<ArgumentException>(
+                () => KeyPair.FromKeys(KeyType.Secp256k1, key.PublicKey, "0x" + new string('0', 64)));
+        }
+
         [Fact]
         public void ANullPrivateKeyIsReportedAsNull()
         {
