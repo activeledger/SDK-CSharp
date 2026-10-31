@@ -105,7 +105,8 @@ namespace Activeledger.Tests
             var (client, _) = Client(Json("<html>502 Bad Gateway</html>"));
 
             var response = await client.SubmitRawAsync("{}");
-            Assert.Empty(response.Errors);
+            Assert.False(response.Committed);
+            Assert.NotEmpty(response.Errors);
             Assert.Empty(response.NewStreams);
             Assert.Equal("<html>502 Bad Gateway</html>", response.Raw);
         }

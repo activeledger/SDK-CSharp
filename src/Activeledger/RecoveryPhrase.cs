@@ -165,18 +165,43 @@ namespace Activeledger
             return string.Join(" ", words);
         }
 
+        // Under InvariantGlobalization (or any runtime without ICU) string.Normalize
+        // silently returns non-ASCII text unchanged. "é" decomposes to two chars
+        // under NFKD, so a result of one char means normalisation is not happening.
+        private static readonly Lazy<bool> NormalizationWorks =
+            new Lazy<bool>(() => "\u00e9".Normalize(NormalizationForm.FormKD).Length == 2);
+
         /// <summary>Turns a recovery phrase into its 64-byte BIP-39 seed.</summary>
+        /// <remarks>
+        /// BIP-39 requires the passphrase in NFKD form. Where the runtime cannot
+        /// normalise (InvariantGlobalization, or no ICU), a passphrase with any
+        /// non-ASCII character is refused rather than normalised wrongly, because
+        /// "caf\u00e9" and "cafe\u0301" would silently derive different keys.
+        /// </remarks>
         /// <exception cref="ArgumentException">The phrase is not a valid mnemonic.</exception>
+        /// <exception cref="PlatformNotSupportedException">
+        /// The passphrase is not ASCII and the runtime cannot normalise it.
+        /// </exception>
         public static byte[] ToSeed(string phrase, string passphrase = "")
         {
             var normalised = Validate(phrase);
+            passphrase ??= "";
+
+            if (!NormalizationWorks.Value && passphrase.Any(c => c > 0x7F))
+            {
+                throw new PlatformNotSupportedException(
+                    "This runtime cannot Unicode-normalise (InvariantGlobalization is on or ICU " +
+                    "is missing), so a non-ASCII passphrase cannot be put into the NFKD form " +
+                    "BIP-39 requires and would derive a different key than on other hosts. " +
+                    "Turn InvariantGlobalization off or use an ASCII passphrase.");
+            }
 
             var generator = new Pkcs5S2ParametersGenerator(new Sha512Digest());
             generator.Init(
                 Encoding.UTF8.GetBytes(normalised),
                 // BIP-39's salt: the passphrase is appended to the literal
                 // "mnemonic", not passed separately.
-                Encoding.UTF8.GetBytes("mnemonic" + (passphrase ?? "").Normalize(NormalizationForm.FormKD)),
+                Encoding.UTF8.GetBytes("mnemonic" + passphrase.Normalize(NormalizationForm.FormKD)),
                 Iterations);
 
             return ((KeyParameter)generator.GenerateDerivedMacParameters(Bip39SeedSize * 8)).GetKey();
