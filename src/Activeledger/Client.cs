@@ -62,9 +62,13 @@ namespace Activeledger
                     result.Add("the response body was not a JSON object");
                     return result;
                 }
-                if (root.TryGetProperty("$summary", out var summary) &&
-                    summary.ValueKind == JsonValueKind.Object &&
-                    summary.TryGetProperty("errors", out var errors) &&
+                if (!root.TryGetProperty("$summary", out var summary) ||
+                    summary.ValueKind != JsonValueKind.Object)
+                {
+                    result.Add("the response had no $summary object");
+                    return result;
+                }
+                if (summary.TryGetProperty("errors", out var errors) &&
                     errors.ValueKind == JsonValueKind.Array)
                 {
                     foreach (var error in errors.EnumerateArray())
@@ -78,7 +82,7 @@ namespace Activeledger
 
         /// <summary>
         /// True when <see cref="Errors"/> is empty: the HTTP status was 2xx, the body
-        /// was a JSON object, and the ledger reported no errors.
+        /// was a JSON object with a <c>$summary</c> object, and the ledger reported no errors.
         /// </summary>
         public bool Committed => Errors.Count == 0;
 

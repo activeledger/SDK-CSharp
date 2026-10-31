@@ -135,7 +135,7 @@ namespace Activeledger.Tests
         [Fact]
         public async Task OnboardReturnsTheNewStreamId()
         {
-            var (client, _) = Client(Json("{\"$streams\":{\"new\":[{\"id\":\"streamid\"}]}}"));
+            var (client, _) = Client(Json("{\"$summary\":{\"errors\":[]},\"$streams\":{\"new\":[{\"id\":\"streamid\"}]}}"));
             var key = KeyPair.Generate(KeyType.Falcon512);
 
             var identity = await client.OnboardAsync(key);
