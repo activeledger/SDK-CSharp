@@ -37,6 +37,13 @@ jobs:
       - name: Pack
         run: dotnet pack src/Activeledger/Activeledger.csproj --no-build -c Release -o artifacts
 
+      # The packed library as a consumer receives it: builds a throwaway app
+      # against only the .nupkg and runs every key type, a signed transaction
+      # and a loopback submit. Loopback only; BouncyCastle comes from the
+      # package cache the restore above populated.
+      - name: Smoke test the package
+        run: scripts/smoke-test.sh
+
       - uses: actions/upload-artifact@v4
         with:
           name: nupkg
