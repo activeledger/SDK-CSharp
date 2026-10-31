@@ -60,8 +60,8 @@ var response = await client.SubmitAsync(tx);
 if (!response.Committed)
 {
     // A ledger rejection arrives as HTTP 200 with errors in the body. Committed
-    // is also false for a non-2xx status or a body that is not a JSON object
-    // (an empty body, an HTML 502); Errors says why. The getters never throw.
+    // is also false for a non-2xx status, a body that is not a JSON object
+    // (an empty body, an HTML 502) or an object with no $summary; Errors says why. The getters never throw.
     Console.WriteLine(string.Join(", ", response.Errors));
 }
 ```
@@ -172,6 +172,8 @@ string priv = mldsa.PrivateKey;
 string ecPub = ec.PublicKey;      // "0x02a1b2..."
 
 // Round-trip a stored key
+// Round-trip a stored key. Throws ArgumentException if the two halves do not
+// belong together.
 var restored = KeyPair.FromKeys(KeyType.MlDsa65, pub, priv);
 
 // Verification only - no private key, and Sign() throws
