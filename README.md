@@ -131,8 +131,8 @@ consumer built against.
 | Key type | Wire string | Public | Private | Signature | Encoding |
 |---|---|---|---|---|---|
 | `KeyType.MlDsa65` | `ml-dsa-65` | 1952 | 4032 | 3309 | base64 |
-| `KeyType.Falcon512` | `falcon-512` | 897 | 1281 | **649–662, variable** | base64 |
-| `KeyType.Secp256k1` | `secp256k1` | 33 or 65 | 32 | **~70–72, variable** | `0x` hex |
+| `KeyType.Falcon512` | `falcon-512` | 897 | 1281 | **648–663, variable** | base64 |
+| `KeyType.Secp256k1` | `secp256k1` | 33 or 65 | 32 | **68–71, variable** | `0x` hex |
 | `KeyType.Rsa` | `rsa` | — | — | — | not implemented |
 
 **RSA is deliberately not implemented.** `KeyType.Rsa` exists in the enum so
@@ -200,8 +200,8 @@ a point prefix that disagree is rejected by name.
 zero byte occurs about once in 400 keys, and an unpadded key is a different
 value to anything reading it strictly.
 
-**secp256k1 signatures are DER, and DER length varies** — 70, 71 and 72 bytes
-all occur. A raw 64-byte `r||s` pair is not what the ledger expects.
+**secp256k1 signatures are DER, and DER length varies** — 68 to 71 bytes
+all occur (70 and 71 account for nearly all). A raw 64-byte `r||s` pair is not what the ledger expects.
 
 **secp256k1 signing is deterministic (RFC 6979) and always low-S**, and this
 matters in both directions:
@@ -221,8 +221,8 @@ Because signing is deterministic, this SDK's signatures are byte-identical to
 `@noble/curves` for the same key and message — checked against published
 reference bytes on every test run, not merely verified.
 
-**Falcon signatures are not a fixed length.** They vary between roughly 649 and
-662 bytes. Any buffer, column or assertion that assumes a constant size will
+**Falcon signatures are not a fixed length.** They vary between 648 and
+663 bytes. Any buffer, column or assertion that assumes a constant size will
 work for a while and then fail on a signature that happens to compress
 differently.
 
