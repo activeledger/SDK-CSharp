@@ -67,31 +67,34 @@ jobs:
   publish:
     needs: release
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # nuget.org trusted publishing (OIDC)
     outputs:
-      # The `secrets` context is not available in a job-level `if`, so the
-      # verify job gates on this output rather than on the key directly - the
-      # condition would evaluate empty and skip silently.
       published: ${{ steps.push.outcome == 'success' }}
-    env:
-      KEY_SET: ${{ secrets.NUGET_API_KEY != '' }}
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: nupkg
           path: nupkg/
 
+      # Exchanges this run's GitHub OIDC token for a short-lived nuget.org API
+      # key. Needs a trusted publishing policy on nuget.org for
+      # activeledger/SDK-CSharp, workflow release.yml, no environment. No
+      # long-lived key is stored in the repository.
+      - name: Log in to nuget.org
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: admwalker
+
       - name: Publish to NuGet
         id: push
-        if: ${{ env.KEY_SET == 'true' }}
         run: |
           dotnet nuget push nupkg/*.nupkg \
-            --api-key "${{ secrets.NUGET_API_KEY }}" \
+            --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" \
             --source https://api.nuget.org/v3/index.json \
             --skip-duplicate
-
-      - name: Say so when skipped
-        if: ${{ env.KEY_SET != 'true' }}
-        run: echo "::warning::NUGET_API_KEY is not set - skipped nuget.org"
 
   verify:
     needs: [release, publish]
